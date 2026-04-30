@@ -12,6 +12,7 @@ type SaveAuditInput = {
   provider?: string;
   lighthouse?: unknown;
   backendMetrics?: unknown;
+  warning?: string;
 };
 
 let sql: ReturnType<typeof neon> | null = null;

@@ -53,6 +53,7 @@ type AuditResult = {
   auditedUrl?: string;
   lighthouse?: LighthouseMetrics;
   backendMetrics?: BackendMetrics;
+  warning?: string;
 };
 
 // ─── Helpers ──────────────────────────────────────────
