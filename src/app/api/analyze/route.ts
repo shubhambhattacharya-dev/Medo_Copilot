@@ -125,16 +125,28 @@ function buildImprovementPrompt({
   title: string;
   issues: AuditIssue[];
 }) {
-  const issueLines = issues.length
-    ? issues
-        .map(
-          (issue, index) =>
-            `${index + 1}. [${issue.category}/${issue.severity}] ${issue.title}: ${issue.fixPrompt}`
-        )
-        .join("\n")
-    : "No major issues were detected. Polish the hero, CTA, trust proof, mobile spacing, and empty/error states without changing the core product flow.";
+  const frontendCats = new Set(["copy", "trust", "cta", "mobile", "empty-state", "error-state", "accessibility", "performance"]);
+  const feIssues = issues.filter(i => frontendCats.has(i.category));
+  const beIssues = issues.filter(i => !frontendCats.has(i.category));
 
-  return `Improve this MeDo app for launch readiness: ${url}\nPage title: ${title || "Unknown"}\n\nFix these audit findings:\n${issueLines}\n\nMake the copy specific, keep one primary CTA above the fold, add trust proof near the CTA, make the mobile layout easy to scan, and add clear empty/loading/error states. Preserve the current product idea and visual style unless a change is required to fix the issue.`;
+  const formatIssues = (list: AuditIssue[]) =>
+    list.length
+      ? list.map((issue, i) => `${i + 1}. [${issue.severity.toUpperCase()}] ${issue.title}: ${issue.fixPrompt}`).join("\n")
+      : "No major issues detected.";
+
+  let prompt = `# Launch Readiness Fix Prompt\nApp: ${url}\nTitle: ${title || "Unknown"}\n\n`;
+
+  prompt += `## FRONTEND FIXES\n${formatIssues(feIssues)}\n\n`;
+  prompt += `## GENERAL FRONTEND GUIDELINES\n- Make the hero headline specific (WHO + WHAT + RESULT)\n- Keep ONE primary CTA above the fold with strong action verbs\n- Add trust signals (testimonials, stats, logos) near the CTA\n- Ensure mobile layout is scannable with 44px+ tap targets\n- Add clear loading, empty, and error states with retry actions\n- Use descriptive alt text on all meaningful images\n\n`;
+
+  if (beIssues.length > 0) {
+    prompt += `## BACKEND FIXES\n${formatIssues(beIssues)}\n\n`;
+    prompt += `## GENERAL BACKEND GUIDELINES\n- Wrap all API handlers in try/catch with proper HTTP status codes\n- Use environment variables for all secrets (never hardcode)\n- Add input validation on every API endpoint\n- Handle timeouts and external service failures gracefully\n- Use parameterized queries to prevent SQL injection\n\n`;
+  }
+
+  prompt += `## RULES\n- Preserve the current product idea and visual style\n- Fix issues in order of severity (HIGH first)\n- Test each fix on mobile and desktop\n- Add error boundaries around critical UI sections`;
+
+  return prompt;
 }
 
 function createIssue(
@@ -913,85 +925,169 @@ export async function POST(req: NextRequest) {
     }
 
     const getPrompt = (supportsVision: boolean) => `
-You are an expert UX/UI product manager and conversion rate optimization specialist auditing a MeDo app before launch.
-You must analyze EVERY SINGLE ASPECT of the page systematically using these proven principles:
+You are a panel of three senior experts conducting a launch-readiness audit:
+1. A **Senior UX/UI Designer** (10+ years, conversion optimization specialist)
+2. A **Senior Software Engineer** (10+ years, full-stack architecture, security, error handling)
+3. A **Senior QA Engineer** (testing, edge cases, robustness, accessibility)
 
-## CORE PRINCIPLES TO CHECK (You MUST ADDRESS EACH ONE):
+You are auditing a web application before launch. Your job is to find REAL, ACTIONABLE issues — not vague suggestions. Be specific with evidence.
 
-### 1. COPY & MESSAGING
-- Is the headline specific? Does it state WHO it's for, WHAT it does, and WHAT RESULT?
-- Is the subheadline compelling and unique? Not generic.
-- Does the copy use specific numbers/data or vague buzzwords?
-- Is the value proposition clear in under 3 seconds?
+═══════════════════════════════════════
+PART A — FRONTEND AUDIT (UX / UI / Copy)
+═══════════════════════════════════════
 
-### 2. TRUST & CREDIBILITY
-- Are there customer testimonials, reviews, or ratings?
-- Are there logos of companies/users/projects worked with?
-- Is there social proof (users count, downloads, etc.)?
-- Are there certifications or badges?
-- Is there a clear "why trust us" section?
+Systematically check EVERY principle below. For each, state whether you found an issue or not.
 
-### 3. CALL-TO-ACTION (CTA)
-- Is there ONE primary CTA above the fold?
-- Is the CTA button prominent (color, size)?
-- Does the CTA use action words (Get, Start, Book, Try)?
-- Are secondary CTAs visually quieter?
-- Is there a clear next step for the user?
+### A1. HERO & VALUE PROPOSITION
+- Can a visitor understand WHO this is for, WHAT it does, and WHAT RESULT they get — within 3 seconds?
+- Is the headline specific with concrete outcomes, or vague with buzzwords like "innovative" and "powerful"?
+- Is there a subheadline that reinforces the headline with a different angle?
 
-### 4. MOBILE EXPERIENCE
-- Is content easy to scan on small screens?
+### A2. COPY & MESSAGING QUALITY
+- Does the copy use specific numbers/data/proof or generic marketing language?
+- Is there spelling, grammar, or awkward phrasing?
+- Is the tone consistent throughout the page?
+- Are paragraphs short and scannable, or wall-of-text?
+
+### A3. TRUST & CREDIBILITY SIGNALS
+- Are there testimonials, reviews, case studies, or user stories?
+- Are there logos, badges, certifications, or "as seen in" sections?
+- Is there social proof (user count, downloads, GitHub stars, ratings)?
+- Is the creator/team visible with names, photos, or LinkedIn links?
+- Is there a clear "why trust us" or credibility section near the CTA?
+
+### A4. CALL-TO-ACTION (CTA) DESIGN
+- Is there ONE clear primary CTA above the fold?
+- Does the CTA use strong action verbs (Get, Start, Try, Book, Join)?
+- Is the CTA visually prominent (contrast, size, whitespace)?
+- Are secondary CTAs visually subordinate to the primary?
+- Does the CTA tell the user what happens next?
+
+### A5. VISUAL HIERARCHY & LAYOUT
+- Is the most important content (hero, CTA) at the top?
+- Is there clear visual separation between sections?
+- Are there enough whitespace and breathing room?
+- Does the layout guide the eye: headline → subtext → CTA → proof?
+- Is the color palette consistent and professional?
+
+### A6. MOBILE EXPERIENCE
+- Is content easy to read on small screens (no horizontal scroll)?
 - Are tap targets at least 44x44px?
-- Is hierarchy clear (most important first)?
-- Does CTA remain visible without scrolling?
+- Does the CTA remain visible without excessive scrolling?
+- Is the navigation mobile-friendly (hamburger menu or simple)?
+- Are images and text properly sized for mobile?
 
-### 5. EMPTY/ERROR STATES
-- Is there a loading state with progress indicator?
-- Is there a clear empty state for no content?
-- Is there a user-friendly error state with retry?
+### A7. MISSING SECTIONS
+- Is there a clear How-It-Works / Features section?
+- Is there an FAQ or objection-handling section?
+- Is there a pricing or "what you get" section?
+- Is there a footer with contact/social links?
 
-### 6. ACCESSIBILITY
+### A8. EMPTY, LOADING & ERROR STATES
+- Does the app handle loading states with skeleton/spinner?
+- Is there a clear empty state when no data exists?
+- Is there a user-friendly error state with retry option?
+- Are form validation errors shown inline?
+
+### A9. ACCESSIBILITY
 - Are images missing alt text?
-- Is color contrast sufficient?
-- Are links/buttons clearly labeled?
-- Is keyboard navigation supported?
+- Is color contrast sufficient (WCAG AA)?
+- Are interactive elements keyboard-accessible?
+- Are links/buttons clearly labeled (not just "click here")?
 
-### 7. PERFORMANCE & SPEED
-- Is the page content-rich (not thin)?
-- Are there too many links (>15)?
-- Is there meaningful content vs. fluff?
+### A10. PAGE PERFORMANCE SIGNALS
+- Is the page content-rich (not thin/sparse)?
+- Are there too many competing links (>15)?
+- Is there meaningful content vs. filler/placeholder text?
+- Is there a proper page title and meta description?
 
-## YOUR TASK:
-For EACH of the 7 principles above, determine if there is an issue or not. If no issue, state that clearly.
-Then provide: thoughtProcess (how you evaluated each principle), launchScore (0-100), verdict, summary, issues[], improvementPrompt.
+═══════════════════════════════════════
+PART B — BACKEND AUDIT (Code / Architecture)
+═══════════════════════════════════════
+${githubCodeText ? `
+You have been provided backend source code from GitHub. Analyze it thoroughly:
 
-## EVIDENCE-BASED SCORING:
-- Start with 85 points (good default)
-- Deduct points ONLY for concrete issues you can evidence
-- Be fair: Don't penalize if content is decent
-- HIGH confidence = saw it in screenshot/text
-- MEDIUM confidence = inferred but not explicit
-- LOW confidence = assumption without evidence
+### B1. SECURITY
+- Are there hardcoded API keys, secrets, or passwords in the code?
+- Is there proper authentication/authorization on protected routes?
+- Are environment variables used correctly?
+- Is input validation present on API endpoints?
+- Is there CORS configuration?
 
-## OUTPUT FORMAT:
-{"thoughtProcess": ["principle 1: checked X, result: Y", "principle 2: checked A, result: B"], "launchScore": number, "verdict": "launch-ready|needs-fixes|broken", "summary": "1-2 sentences", "issues": [{"category": "copy|trust|cta|mobile|empty-state|accessibility|performance|security|architecture|database|backend-error", "title": "specific issue name", "severity": "high|medium|low", "description": "why this matters", "fixPrompt": "specific action", "evidence": "exact text/element seen", "confidence": "high|medium|low"}], "improvementPrompt": "full improvement prompt for MeDo"}
+### B2. ERROR HANDLING & RESILIENCE
+- Do API routes have proper try/catch blocks?
+- Are errors returned with appropriate HTTP status codes (not generic 500)?
+- Is there graceful degradation when external services fail?
+- Are async operations properly awaited?
+- Are there timeout handling for external API calls?
 
+### B3. DATABASE & DATA LAYER
+- Are there N+1 query patterns?
+- Is there proper connection pooling?
+- Are database queries parameterized (SQL injection prevention)?
+- Is there proper data validation before database operations?
+- Are there missing indexes on frequently queried fields?
+
+### B4. API DESIGN & ARCHITECTURE
+- Are REST conventions followed (proper HTTP methods, status codes)?
+- Is there consistent error response format?
+- Are routes properly organized and modular?
+- Is there rate limiting or abuse prevention?
+- Are responses properly typed?
+
+### B5. CODE QUALITY
+- Is there code duplication that should be refactored?
+- Are functions too long (>50 lines)?
+- Is there proper separation of concerns?
+- Are there unused imports or dead code?
+- Is naming consistent and descriptive?
+
+### B6. DEPLOYMENT READINESS
+- Are there proper environment variable checks?
+- Is there health check endpoint?
+- Are there proper logging practices?
+- Is the build configuration correct?
+
+BACKEND CODE:
+${githubCodeText}` : `
+No backend code was provided (no GitHub URL). Skip Part B entirely. Only report frontend issues.`}
+
+═══════════════════════════════════════
+SCORING RULES
+═══════════════════════════════════════
+- Start at 85 points
+- HIGH severity issue: -8 to -12 points
+- MEDIUM severity issue: -3 to -5 points
+- LOW severity issue: -1 to -2 points
+- HIGH confidence = you SAW evidence in screenshot/text/code
+- MEDIUM confidence = strongly inferred from context
+- LOW confidence = educated guess
+- Be FAIR: don't penalize for acceptable implementations
+- If no backend code provided, score purely on frontend
+
+═══════════════════════════════════════
+OUTPUT (JSON)
+═══════════════════════════════════════
+{"thoughtProcess": ["A1-Hero: checked headline...", "A2-Copy: evaluated tone...", "B1-Security: scanned for hardcoded keys..."], "launchScore": number, "verdict": "launch-ready|needs-fixes|broken", "summary": "2-3 sentences covering both frontend and backend assessment", "issues": [{"category": "copy|trust|cta|mobile|empty-state|error-state|accessibility|performance|security|architecture|database|backend-error", "title": "specific issue name", "severity": "high|medium|low", "description": "why this matters for launch readiness", "fixPrompt": "exact actionable instruction to fix this - be specific, not vague", "evidence": "the exact text/element/code line that proves this issue", "confidence": "high|medium|low"}], "improvementPrompt": "A complete, detailed prompt the user can paste into an AI assistant to fix ALL frontend and backend issues at once. Include specific file paths and code changes where relevant."}
+
+═══════════════════════════════════════
+TARGET PAGE DATA
+═══════════════════════════════════════
 URL: ${validUrl}
 Title: ${pageTitle}
-Content: ${pageText.substring(0, 3000)}
+Content: ${pageText.substring(0, 4000)}
 
 ${supportsVision 
-  ? `You have the SCREENSHOT. Examine: visual hierarchy, CTA prominence, mobile-friendliness, empty states visually present.`
-  : `TEXT-ONLY mode. Focus on copy quality, CTA phrasing, trust signals in text. DO NOT guess about visual elements.`
+  ? `You have SCREENSHOTS attached. Use them to evaluate: visual hierarchy, CTA prominence, color scheme, mobile readability, layout quality, and empty states. Reference specific visual elements in your evidence.`
+  : `TEXT-ONLY mode. You cannot see the page visually. Focus on: copy quality, CTA phrasing, trust signal keywords, content depth, meta tags. Do NOT make claims about visual elements you cannot verify.`
 }
 
 Measured signals:
-- Meta description: ${pageSignals.metaDescription || "missing"}
-- CTA/link labels: ${pageSignals.ctas.join(", ") || "none detected"}
-- Link count: ${pageSignals.links.length}
-- Image alt coverage: ${pageSignals.imageCount - pageSignals.imagesMissingAlt}/${pageSignals.imageCount}
-- Extracted text length: ${pageSignals.contentLength}
-
-${githubCodeText ? `\n\n## BACKEND CODE ANALYSIS\nYou have also been provided with the backend source code from GitHub:\n${githubCodeText}\n\nAnalyze the backend code for:\n1. SECURITY: Hardcoded keys, missing auth.\n2. ERROR HANDLING: Missing try/catch, generic 500s.\n3. DATABASE: N+1 queries, unoptimized loops.\nInclude these issues in your final JSON with categories like 'security', 'architecture', 'database', 'backend-error'.` : ""}
+- Meta description: ${pageSignals.metaDescription || "MISSING"}
+- CTA/link labels found: ${pageSignals.ctas.join(", ") || "NONE DETECTED"}
+- Total links: ${pageSignals.links.length}
+- Image alt coverage: ${pageSignals.imageCount - pageSignals.imagesMissingAlt}/${pageSignals.imageCount} images have alt text
+- Extracted text length: ${pageSignals.contentLength} characters
 `;
 
      const aiModels: AiProvider[] = [];
