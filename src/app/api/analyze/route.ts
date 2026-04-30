@@ -358,9 +358,9 @@ function mergeIssues(aiIssues: AuditIssue[], ruleIssues: AuditIssue[]) {
 }
 
 function scorePenalty(issue: AuditIssue) {
-  if (issue.severity === "high") return 14;
-  if (issue.severity === "medium") return 8;
-  return 4;
+  if (issue.severity === "high") return 10;
+  if (issue.severity === "medium") return 5;
+  return 2;
 }
 
 function buildMeasuredResult({
@@ -464,7 +464,7 @@ async function multiStepAnalyze(
   screenshots?: string[]
 ) {
   const copyPrompt = COPY_ANALYSIS_PROMPT(url, title, text, ctas, links);
-  
+   
   const copyResultText = (
     await generateText({
       model,
@@ -501,8 +501,8 @@ async function multiStepAnalyze(
           model,
           messages: [{
             role: "user",
-            content: [
-              { type: "text", text: VISUAL_ANALYSIS_PROMPT(url, title) },
+            content: [{
+              type: "text", text: VISUAL_ANALYSIS_PROMPT(url, title) },
               ...screenshots.map(s => ({ type: "image" as const, image: Buffer.from(s, "base64"), mediaType: "image/png" }))
             ]
           }]
@@ -528,8 +528,8 @@ async function multiStepAnalyze(
   const allIssues = [...copyIssues, ...visualIssues];
   const baseScore = structuredOutput ? 85 : 80;
   const penalty = allIssues.reduce((total, issue) => {
-    if (issue.severity === "high") return total + 12;
-    if (issue.severity === "medium") return total + 6;
+    if (issue.severity === "high") return total + 10;
+    if (issue.severity === "medium") return total + 5;
     return total + 2;
   }, 0);
   
@@ -805,9 +805,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Collect all screenshots
+    // Collect all screenshots (limit to 7 to match UI)
     formData.forEach((value, key) => {
-      if (key.startsWith("screenshot_") && typeof value === "string") {
+      if (key.startsWith("screenshot_") && typeof value === "string" && screenshots.length < 7) {
         screenshots.push(value);
       }
     });
@@ -817,45 +817,80 @@ export async function POST(req: NextRequest) {
       screenshots.push(userScreenshot);
     } 
     
-    if (screenshots.length === 0) {
-      try {
-        console.log(`Launching browser for ${validUrl}...`);
-        const browser = await chromium.launch({ 
-          headless: true,
-          args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] 
-        });
-        const context = await browser.newContext({
-          viewport: { width: 1280, height: 800 },
-          userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-        });
-        const page = await context.newPage();
+     if (screenshots.length === 0) {
+       try {
+         console.log(`Launching browser for ${validUrl}...`);
+         const browser = await chromium.launch({ 
+           headless: true,
+           args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] 
+         });
+         const context = await browser.newContext({
+           viewport: { width: 1280, height: 800 },
+           userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+         });
+         const page = await context.newPage();
 
-        try {
-          console.log(`Navigating to ${validUrl}...`);
-          await page.goto(validUrl, { waitUntil: "domcontentloaded", timeout: 25000 });
-          
-          console.log("Waiting for 2 seconds for JS hydration...");
-          await page.waitForTimeout(2000);
+         try {
+           console.log(`Navigating to ${validUrl}...`);
+           const navigationPromise = page.goto(validUrl, { waitUntil: "domcontentloaded", timeout: 25000 });
+           
+           // Add timeout for navigation
+           await Promise.race([
+             navigationPromise,
+             new Promise((_, reject) => 
+               setTimeout(() => reject(new Error("Navigation timeout")), 25000)
+             )
+           ]);
+           
+           console.log("Waiting for 2 seconds for JS hydration...");
+           await page.waitForTimeout(2000);
 
-          console.log("Taking screenshot...");
-          const screenshot = await page.screenshot({ type: "png" });
-          screenshots.push(screenshot.toString("base64"));
+           console.log("Taking screenshot...");
+           const screenshot = await page.screenshot({ type: "png" });
+           screenshots.push(screenshot.toString("base64"));
 
-          console.log("Extracting content...");
-          const html = await page.content();
-          const $ = cheerio.load(html);
-          pageSignals = getPageSignals($);
-          pageTitle = pageSignals.title;
-          pageText = pageSignals.text.substring(0, 8000);
-        } catch (err: unknown) {
-          fetchReason = `Cannot render the website: ${err instanceof Error ? err.message : "Unknown error"}`;
-        } finally {
-          await browser.close();
-        }
-      } catch (browserError: unknown) {
-        fetchReason = `Browser initialization failed: ${browserError instanceof Error ? browserError.message : "Unknown error"}`;
-      }
-    }
+           console.log("Extracting content...");
+           const html = await page.content();
+           const $ = cheerio.load(html);
+           pageSignals = getPageSignals($);
+           pageTitle = pageSignals.title;
+           pageText = pageSignals.text.substring(0, 8000);
+         } catch (navErr: unknown) {
+           // More specific error handling for navigation issues
+           if (navErr instanceof Error) {
+             if (navErr.message.includes("timeout") || navErr.message.includes("Timeout")) {
+               fetchReason = `Navigation timeout: The website took too long to load. Please check if the URL is correct and the server is responding.`;
+             } else if (navErr.message.includes("net::ERR_NAME_NOT_RESOLVED") || 
+                       navErr.message.includes("ENOTFOUND")) {
+               fetchReason = `DNS resolution failed: Unable to resolve the domain name. Please check if the URL is correct and the domain exists.`;
+             } else if (navErr.message.includes("net::ERR_CONNECTION_REFUSED")) {
+               fetchReason = `Connection refused: The server is not accepting connections. Please check if the server is running and accessible.`;
+             } else if (navErr.message.includes("net::ERR_CONNECTION_TIMED_OUT")) {
+               fetchReason = `Connection timed out: Unable to establish a connection to the server. Please check network connectivity and server status.`;
+             } else {
+               fetchReason = `Navigation failed: ${navErr.message}`;
+             }
+           } else {
+             fetchReason = "Navigation failed: Unknown error occurred while loading the page";
+           }
+         } finally {
+           await browser.close().catch(closeErr => {
+             console.warn("Error closing browser:", closeErr);
+           });
+         }
+       } catch (browserError: unknown) {
+         // More specific error handling for browser initialization
+         if (browserError instanceof Error) {
+           if (browserError.message.includes("Executable doesn't exist")) {
+             fetchReason = "Browser initialization failed: Playwright browsers are not installed. Please run 'npx playwright install' to install required browsers.";
+           } else {
+             fetchReason = `Browser initialization failed: ${browserError.message}`;
+           }
+         } else {
+           fetchReason = "Browser initialization failed: Unknown error occurred while initializing the browser";
+         }
+       }
+     }
 
     const ruleIssues = buildRuleIssues(pageSignals, fetchReason || undefined);
     const measuredResult = buildMeasuredResult({
@@ -959,42 +994,54 @@ Measured signals:
 ${githubCodeText ? `\n\n## BACKEND CODE ANALYSIS\nYou have also been provided with the backend source code from GitHub:\n${githubCodeText}\n\nAnalyze the backend code for:\n1. SECURITY: Hardcoded keys, missing auth.\n2. ERROR HANDLING: Missing try/catch, generic 500s.\n3. DATABASE: N+1 queries, unoptimized loops.\nInclude these issues in your final JSON with categories like 'security', 'architecture', 'database', 'backend-error'.` : ""}
 `;
 
-    const aiModels: AiProvider[] = [];
+     const aiModels: AiProvider[] = [];
 
-    // 1. Google (Gemini) - Most reliable for complex vision tasks
-    if (process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
-      aiModels.push({
-        name: "gemini",
-        model: google(process.env.GOOGLE_GENERATIVE_AI_MODEL || "gemini-2.0-flash"),
-        structuredOutput: true,
-        supportsVision: true,
-      });
-    }
+     // Helper function to create a standardized AI provider
+     const createAIProvider = (name: string, model: LanguageModel, structuredOutput: boolean, supportsVision: boolean = true): AiProvider => ({
+       name,
+       model,
+       structuredOutput,
+       supportsVision,
+     });
 
-    // 2. Groq (Llama Vision) - Best for speed
-    if (process.env.GROQ_API_KEY) {
-      const groqClient = groq(process.env.GROQ_MODEL || "llama-3.2-11b-vision-preview");
-      aiModels.push({
-        name: "groq",
-        model: groqClient,
-        structuredOutput: false,
-        supportsVision: true,
-      });
-    }
+     // 1. Google (Gemini) - Most reliable for complex vision tasks
+     if (process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+       aiModels.push(
+         createAIProvider(
+           "gemini",
+           google(process.env.GOOGLE_GENERATIVE_AI_MODEL || "gemini-2.0-flash"),
+           true,
+           true
+         )
+       );
+     }
 
-    // 3. SiliconFlow - Reliable alternative with generous quota
-    if (process.env.SILICONFLOW_API_KEY) {
-      const siliconflow = createOpenAI({
-        baseURL: "https://api.siliconflow.cn/v1",
-        apiKey: process.env.SILICONFLOW_API_KEY,
-      });
-      aiModels.push({
-        name: "siliconflow",
-        model: siliconflow("Qwen/Qwen2.5-VL-72B-Instruct"),
-        structuredOutput: false,
-        supportsVision: true,
-      });
-    }
+      // 2. Groq (Llama Vision) - Best for speed
+      if (process.env.GROQ_API_KEY) {
+        aiModels.push(
+          createAIProvider(
+            "groq",
+            groq(process.env.GROQ_MODEL || "llama-3.2-90b-vision-preview"),
+            false,
+            true
+          )
+        );
+      }
+
+     // 3. SiliconFlow - Reliable alternative with generous quota
+     if (process.env.SILICONFLOW_API_KEY) {
+       aiModels.push(
+         createAIProvider(
+           "siliconflow",
+           createOpenAI({
+             baseURL: "https://api.siliconflow.cn/v1",
+             apiKey: process.env.SILICONFLOW_API_KEY,
+           })("Qwen/Qwen2.5-VL-72B-Instruct"),
+           false,
+           true
+         )
+       );
+     }
 
     if (!aiModels.length) {
       console.error("No AI models configured! Check your .env.local keys.");
