@@ -182,7 +182,16 @@ OUTPUT (JSON)
     const lighthouseMetrics = results[2]?.status === 'fulfilled' ? results[2].value : null;
 
     if (!visionTaskRes && !lighthouseMetrics && !backendMetrics) {
-      throw new Error("All analysis providers (AI and Deterministic) failed.");
+      return {
+        issues: [],
+        launchScore: 0,
+        verdict: "broken",
+        summary: "All analysis engines failed. The AI provider is unavailable, Lighthouse could not reach the URL (is it a localhost link?), and no GitHub code was provided.",
+        improvementPrompt: "N/A",
+        analysisMode: "failed",
+        provider: "None",
+        warning: "CRITICAL FAILURE: No analysis data could be generated. Please check your API keys and ensure your website is publicly accessible."
+      };
     }
 
     let visionResult: any = null;

@@ -106,7 +106,6 @@ export default function SettingsPage() {
       setVisionKey("");
       setCodeKey("");
       toast.success("Settings saved successfully!");
-      setTimeout(() => router.push("/"), 1500);
     } catch (err) {
       console.error("Save error:", err);
       toast.error(err instanceof Error ? err.message : "Failed to save settings");

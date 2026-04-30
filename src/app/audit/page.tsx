@@ -526,7 +526,7 @@ export default function AuditPage() {
                   <div key={idx} className="flex gap-4">
                     <div className="flex flex-col items-center">
                       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-500/20 to-cyan-500/20 text-[10px] font-bold text-violet-300">{idx + 1}</div>
-                      {idx < result.thoughtProcess!.length - 1 && <div className="mt-1 h-full w-px bg-gradient-to-b from-border/50 to-transparent" />}
+                      {idx < (result.thoughtProcess?.length ?? 0) - 1 && <div className="mt-1 h-full w-px bg-gradient-to-b from-border/50 to-transparent" />}
                     </div>
                     <p className="pb-5 text-xs leading-6 text-muted-foreground">{step}</p>
                   </div>

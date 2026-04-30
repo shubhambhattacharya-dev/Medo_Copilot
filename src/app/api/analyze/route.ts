@@ -153,10 +153,17 @@ export async function POST(req: NextRequest) {
       imagesMissingAlt: 0,
     };
     let fetchReason = "";
-    const screenshots: string[] = [];
+    let screenshots: string[] = [];
 
     let githubCodeText = "";
-    if (githubUrl && typeof githubUrl === "string" && githubUrl.includes("github.com")) {
+    if (githubUrl && typeof githubUrl === "string") {
+      const githubPattern = /^https?:\/\/github\.com\/[\w-]+\/[\w.-]+(\/tree\/[\w.-]+)?\/?$/;
+      if (!githubPattern.test(githubUrl)) {
+        return NextResponse.json(
+          { error: "Invalid GitHub URL. Must match pattern like github.com/owner/repo or github.com/owner/repo/tree/branch" },
+          { status: 400 }
+        );
+      }
       console.log(`Fetching GitHub code from: ${githubUrl}`);
       try {
         const ghResult = await fetchGithubRepoCode(githubUrl);
@@ -169,11 +176,22 @@ export async function POST(req: NextRequest) {
     }
 
     // Collect all screenshots (limit to 7 to match UI)
+    screenshots = screenshots.slice(0, 7);
     formData.forEach((value, key) => {
       if (key.startsWith("screenshot_") && typeof value === "string" && screenshots.length < 7) {
         screenshots.push(value);
       }
     });
+
+    for (const screenshot of screenshots) {
+      const decoded = Buffer.from(screenshot, "base64");
+      if (decoded.length > 5 * 1024 * 1024) {
+        return NextResponse.json(
+          { error: "Screenshot too large. Must be under 5MB." },
+          { status: 400 }
+        );
+      }
+    }
 
     if (userScreenshot && typeof userScreenshot === "string" && userScreenshot.length > 100) {
       console.log("User provided screenshot - using for analysis...");
@@ -297,10 +315,14 @@ export async function POST(req: NextRequest) {
 
     } catch (llmError: unknown) {
       console.error("[Analysis Error]", llmError);
-      return NextResponse.json(
-        { error: `AI analysis failed: ${getErrorMessage(llmError)}. Please check your API keys and quota.` },
-        { status: 503 }
-      );
+      
+      // Even if AI completely fails (throws), we still return the deterministic results
+      const errorResult: AuditResponse = {
+        ...fallbackResult,
+        warning: `AI Analysis failed: ${getErrorMessage(llmError)}. Showing deterministic metrics only.`
+      };
+      
+      return NextResponse.json(await attachSavedAuditId(validUrl, errorResult));
     }
   } catch (error) {
     console.error("Audit API Error:", error);

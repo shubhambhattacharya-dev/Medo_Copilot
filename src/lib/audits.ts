@@ -110,6 +110,8 @@ export async function ensureUserSettingsTable() {
     )
   `;
 
+  await db`CREATE INDEX IF NOT EXISTS idx_user_settings_user_id ON user_settings(user_id)`;
+
   return db;
 }
 
