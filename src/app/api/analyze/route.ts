@@ -29,6 +29,7 @@ async function attachSavedAuditId(url: string, result: AuditResponse) {
       provider: result.provider,
       lighthouse: result.lighthouse,
       backendMetrics: result.backendMetrics,
+      warning: result.warning,
     });
 
     return auditId ? { ...result, auditId } : result;

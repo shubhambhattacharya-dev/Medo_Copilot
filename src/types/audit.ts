@@ -94,6 +94,7 @@ export type AuditResponse = z.infer<typeof ResultSchema> & {
   provider?: string;
   lighthouse?: LighthouseMetrics;
   backendMetrics?: BackendMetrics;
+  warning?: string;
 };
 
 export type PageSignals = {

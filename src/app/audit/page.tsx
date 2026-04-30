@@ -274,7 +274,22 @@ export default function AuditPage() {
               {lowCount > 0 && <span className="flex items-center gap-1.5 rounded-full bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-400"><span className="h-1.5 w-1.5 rounded-full bg-blue-500" /> {lowCount} Info</span>}
             </div>
           )}
-          {sortedIssues.length === 0 && <p className="text-sm text-emerald-400 font-medium">✨ No issues found — your app looks great!</p>}
+          {sortedIssues.length === 0 && !result.warning && <p className="text-sm text-emerald-400 font-medium">✨ No issues found — your app looks great!</p>}
+          
+          {/* ── AI Failure Warning Banner ── */}
+          {result.warning && (
+            <div className="w-full mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 backdrop-blur-sm">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+                <div className="flex flex-col gap-1 text-left">
+                  <h3 className="font-semibold text-amber-500">Partial Audit Results</h3>
+                  <p className="text-sm text-amber-500/80 leading-relaxed">
+                    {result.warning} Deterministic metrics (Lighthouse & Static Analysis) are displayed below, but the AI could not generate UX/UI issues.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
 
         {/* ── Accuracy Warning ── */}

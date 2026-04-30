@@ -59,9 +59,8 @@ export default function SettingsPage() {
     async function fetchSettings() {
       try {
         const res = await fetch("/api/user/settings");
-        const data: UserSettings = await res.json();
-        
         if (res.ok) {
+          const data: UserSettings = await res.json();
           setVisionProvider(data.visionProvider || "default");
           setCodeProvider(data.codeProvider || "default");
         }

@@ -98,7 +98,7 @@ export default function Home() {
   // Fetch user settings on mount
   useEffect(() => {
     fetch("/api/user/settings")
-      .then(res => res.json())
+      .then(res => res.ok ? res.json() : { error: "Failed to fetch settings" })
       .then(data => {
         if (!data.error) {
           if (data.visionProvider) setVisionProvider(data.visionProvider);

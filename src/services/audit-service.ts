@@ -181,17 +181,22 @@ OUTPUT (JSON)
     const codeTaskRes = results[1]?.status === 'fulfilled' ? results[1].value : null;
     const lighthouseMetrics = results[2]?.status === 'fulfilled' ? results[2].value : null;
 
-    if (!visionTaskRes) throw new Error("Vision analysis failed to return a result.");
+    if (!visionTaskRes && !lighthouseMetrics && !backendMetrics) {
+      throw new Error("All analysis providers (AI and Deterministic) failed.");
+    }
 
-    let visionResult: any;
-    let codeResult: any;
+    let visionResult: any = null;
+    let codeResult: any = null;
 
-    try {
-      const visionMatch = visionTaskRes.text.match(/\{[\s\S]*\}/);
-      if (!visionMatch?.[0]) throw new Error("No JSON found in vision response");
-      visionResult = JSON.parse(visionMatch[0]);
-    } catch {
-      throw new Error(`Failed to parse vision result: ${visionTaskRes.text.slice(0, 200)}`);
+    if (visionTaskRes && visionTaskRes.text) {
+      try {
+        const visionMatch = visionTaskRes.text.match(/\{[\s\S]*\}/);
+        if (visionMatch?.[0]) {
+          visionResult = JSON.parse(visionMatch[0]);
+        }
+      } catch (e) {
+        console.warn("Failed to parse vision result", e);
+      }
     }
 
     if (codeTaskRes) {
@@ -209,6 +214,22 @@ OUTPUT (JSON)
   }
 
   private static mergeResults(vision: any, code: any, lighthouse: any, backendMetrics: any, visionName: string, codeName?: string): any {
+    // Graceful Fallback: If AI completely failed
+    if (!vision) {
+      return {
+        issues: [],
+        launchScore: 0,
+        verdict: "needs-fixes",
+        summary: "AI Analysis failed to generate a report, but deterministic metrics are available.",
+        improvementPrompt: "N/A",
+        analysisMode: "fallback-deterministic",
+        provider: "Lighthouse + Static Analyzer",
+        lighthouse: lighthouse || undefined,
+        backendMetrics: backendMetrics || undefined,
+        warning: "AI provider failed or timed out. Showing deterministic metrics only."
+      };
+    }
+
     const allIssues = [...(vision.issues || [])];
     if (code && code.issues) allIssues.push(...code.issues);
 
