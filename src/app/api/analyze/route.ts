@@ -194,18 +194,18 @@ export async function POST(req: NextRequest) {
 
         try {
           console.log(`Navigating to ${validUrl}...`);
-          const navigationPromise = page.goto(validUrl, { waitUntil: "domcontentloaded", timeout: 25000 });
+          const navigationPromise = page.goto(validUrl, { waitUntil: "domcontentloaded", timeout: 12000 });
 
           // Add timeout for navigation
           await Promise.race([
             navigationPromise,
             new Promise((_, reject) =>
-              setTimeout(() => reject(new Error("Navigation timeout")), 25000)
+              setTimeout(() => reject(new Error("Navigation timeout")), 12000)
             )
           ]);
 
-          console.log("Waiting for 2 seconds for JS hydration...");
-          await page.waitForTimeout(2000);
+          console.log("Waiting for 1 second for JS hydration...");
+          await page.waitForTimeout(1000);
 
           console.log("Taking screenshot...");
           const screenshot = await page.screenshot({ type: "png" });

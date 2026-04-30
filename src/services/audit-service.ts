@@ -92,9 +92,17 @@ OUTPUT (JSON)
   }
 
   static async fetchLighthouseScores(url: string) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000); // 12 seconds max
+
     try {
       const endpoint = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&category=PERFORMANCE&category=ACCESSIBILITY&category=BEST_PRACTICES&category=SEO`;
-      const res = await fetch(endpoint, { next: { revalidate: 3600 } }); // Cache for 1 hour
+      const res = await fetch(endpoint, { 
+        next: { revalidate: 3600 },
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      
       if (!res.ok) return null;
       
       const data = await res.json();
@@ -108,7 +116,8 @@ OUTPUT (JSON)
         seo: Math.round((categories.seo?.score || 0) * 100),
       };
     } catch (err) {
-      console.warn("Lighthouse fetch failed:", err);
+      clearTimeout(timeoutId);
+      console.warn("Lighthouse fetch failed or timed out:", err);
       return null;
     }
   }
