@@ -5,7 +5,7 @@ import { ScoreGauge } from "@/components/score-gauge";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { FRONTEND_CATEGORIES } from "@/types/audit";
-import type { AuditIssue } from "@/types/audit";
+import type { AuditIssue, LighthouseMetrics, BackendMetrics } from "@/types/audit";
 import {
   ArrowLeft,
   AlertTriangle,
@@ -34,6 +34,8 @@ import {
   RotateCcw,
   TrendingUp,
   Clock,
+  Gauge,
+  Cpu,
 } from "lucide-react";
 import { escapeHtml } from "@/lib/utils";
 
@@ -49,6 +51,8 @@ type AuditResult = {
   improvementPrompt?: string;
   thoughtProcess?: string[];
   auditedUrl?: string;
+  lighthouse?: LighthouseMetrics;
+  backendMetrics?: BackendMetrics;
 };
 
 // ─── Helpers ──────────────────────────────────────────
@@ -108,7 +112,7 @@ function AuditSkeleton() {
           <div className="h-5 w-96 rounded bg-muted/20" />
         </div>
         <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          {[1,2,3,4,5,6].map(i => <div key={i} className="h-44 rounded-2xl border border-border/30 bg-muted/10" />)}
+          {[1, 2, 3, 4, 5, 6].map(i => <div key={i} className="h-44 rounded-2xl border border-border/30 bg-muted/10" />)}
         </div>
       </div>
     </div>
@@ -296,6 +300,85 @@ export default function AuditPage() {
             </div>
           </div>
         </section>
+
+        {/* ── Lighthouse Metrics (if available) ── */}
+        {result.lighthouse && (
+          <section className="mt-14">
+            <div className="mb-6 flex items-center gap-3">
+              <div className="rounded-xl bg-blue-500/10 p-2.5">
+                <Gauge className="h-5 w-5 text-blue-400" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold tracking-tight">Core Web Vitals</h2>
+                <p className="text-sm text-muted-foreground">Deterministic scores from Google Lighthouse</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {[
+                { label: "Performance", score: result.lighthouse.performance },
+                { label: "Accessibility", score: result.lighthouse.accessibility },
+                { label: "Best Practices", score: result.lighthouse.bestPractices },
+                { label: "SEO", score: result.lighthouse.seo },
+              ].map((metric) => (
+                <div key={metric.label} className="flex flex-col items-center justify-center p-6 rounded-2xl border border-border/50 bg-background/60 backdrop-blur-sm">
+                  <div className="relative flex items-center justify-center w-16 h-16 rounded-full" style={{
+                    background: `conic-gradient(${
+                      metric.score >= 90 ? '#10b981' : metric.score >= 50 ? '#f59e0b' : '#ef4444'
+                    } ${metric.score}%, transparent ${metric.score}%)`
+                  }}>
+                    <div className="absolute inset-1 rounded-full bg-background flex items-center justify-center">
+                      <span className={`text-lg font-bold ${
+                        metric.score >= 90 ? 'text-emerald-400' : metric.score >= 50 ? 'text-amber-400' : 'text-red-400'
+                      }`}>
+                        {metric.score}
+                      </span>
+                    </div>
+                  </div>
+                  <span className="mt-3 text-sm font-medium text-foreground">{metric.label}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* ── Backend Static Metrics (if available) ── */}
+        {result.backendMetrics && (
+          <section className="mt-8">
+            <div className="mb-6 flex items-center gap-3">
+              <div className="rounded-xl bg-violet-500/10 p-2.5">
+                <Cpu className="h-5 w-5 text-violet-400" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold tracking-tight">Backend Health</h2>
+                <p className="text-sm text-muted-foreground">Deterministic scores from Static Code Analyzer</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {[
+                { label: "Security", score: result.backendMetrics.security },
+                { label: "Code Quality", score: result.backendMetrics.codeQuality },
+                { label: "Maintainability", score: result.backendMetrics.maintainability },
+              ].map((metric) => (
+                <div key={metric.label} className="flex flex-col items-center justify-center p-6 rounded-2xl border border-border/50 bg-background/60 backdrop-blur-sm">
+                  <div className="relative flex items-center justify-center w-16 h-16 rounded-full" style={{
+                    background: `conic-gradient(${
+                      metric.score >= 90 ? '#10b981' : metric.score >= 50 ? '#f59e0b' : '#ef4444'
+                    } ${metric.score}%, transparent ${metric.score}%)`
+                  }}>
+                    <div className="absolute inset-1 rounded-full bg-background flex items-center justify-center">
+                      <span className={`text-lg font-bold ${
+                        metric.score >= 90 ? 'text-emerald-400' : metric.score >= 50 ? 'text-amber-400' : 'text-red-400'
+                      }`}>
+                        {metric.score}
+                      </span>
+                    </div>
+                  </div>
+                  <span className="mt-3 text-sm font-medium text-foreground">{metric.label}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* ── Issue Card Component ── */}
         {(() => {

@@ -10,6 +10,8 @@ type SaveAuditInput = {
   improvementPrompt?: string;
   analysisMode?: string;
   provider?: string;
+  lighthouse?: unknown;
+  backendMetrics?: unknown;
 };
 
 let sql: ReturnType<typeof neon> | null = null;
@@ -40,6 +42,20 @@ async function ensureAuditTable() {
     )
   `;
 
+  // Safely add columns if they don't exist
+  await db`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='audits' AND column_name='lighthouse') THEN
+        ALTER TABLE audits ADD COLUMN lighthouse jsonb;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='audits' AND column_name='backend_metrics') THEN
+        ALTER TABLE audits ADD COLUMN backend_metrics jsonb;
+      END IF;
+    END
+    $$;
+  `;
+
   tableReady = true;
   return db;
 }
@@ -57,7 +73,9 @@ export async function saveAudit(input: SaveAuditInput) {
       issues,
       improvement_prompt,
       analysis_mode,
-      provider
+      provider,
+      lighthouse,
+      backend_metrics
     )
     VALUES (
       ${input.url},
@@ -67,7 +85,9 @@ export async function saveAudit(input: SaveAuditInput) {
       ${JSON.stringify(input.issues)}::jsonb,
       ${input.improvementPrompt ?? null},
       ${input.analysisMode ?? null},
-      ${input.provider ?? null}
+      ${input.provider ?? null},
+      ${input.lighthouse ? JSON.stringify(input.lighthouse) : null}::jsonb,
+      ${input.backendMetrics ? JSON.stringify(input.backendMetrics) : null}::jsonb
     )
     RETURNING id
   `) as { id: string }[];
@@ -109,7 +129,7 @@ export async function getUserSettings(userId: string) {
 
   if (!rows[0]) return null;
   const row = rows[0];
-  
+
   return {
     userId: row.user_id,
     visionProvider: row.vision_provider,

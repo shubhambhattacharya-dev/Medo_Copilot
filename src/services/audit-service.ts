@@ -2,6 +2,7 @@ import { generateText } from "ai";
 import { AiProvider } from "./ai-service";
 import type { AuditIssue } from "@/types/audit";
 import type { PageSignals } from "@/lib/audit-helpers";
+import { StaticAnalyzer } from "@/lib/static-analyzer";
 
 export class AuditService {
   static getFrontendPrompt(validUrl: string, pageTitle: string, pageText: string, pageSignals: PageSignals, supportsVision: boolean) {
@@ -48,10 +49,10 @@ URL: ${validUrl}
 Title: ${pageTitle}
 Content: ${pageText.substring(0, 4000)}
 
-${supportsVision 
-  ? `You have SCREENSHOTS attached. Use them to evaluate: visual hierarchy, CTA prominence, color scheme, mobile readability, layout quality, and empty states.`
-  : `TEXT-ONLY mode. Focus on: copy quality, CTA phrasing, trust signal keywords.`
-}
+${supportsVision
+        ? `You have SCREENSHOTS attached. Use them to evaluate: visual hierarchy, CTA prominence, color scheme, mobile readability, layout quality, and empty states.`
+        : `TEXT-ONLY mode. Focus on: copy quality, CTA phrasing, trust signal keywords.`
+      }
 Measured signals:
 - Meta description: ${pageSignals.metaDescription || "MISSING"}
 - CTA/link labels found: ${pageSignals.ctas?.join(", ") || "NONE DETECTED"}
@@ -90,8 +91,30 @@ OUTPUT (JSON)
 `;
   }
 
+  static async fetchLighthouseScores(url: string) {
+    try {
+      const endpoint = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&category=PERFORMANCE&category=ACCESSIBILITY&category=BEST_PRACTICES&category=SEO`;
+      const res = await fetch(endpoint, { next: { revalidate: 3600 } }); // Cache for 1 hour
+      if (!res.ok) return null;
+      
+      const data = await res.json();
+      const categories = data?.lighthouseResult?.categories;
+      if (!categories) return null;
+
+      return {
+        performance: Math.round((categories.performance?.score || 0) * 100),
+        accessibility: Math.round((categories.accessibility?.score || 0) * 100),
+        bestPractices: Math.round((categories['best-practices']?.score || 0) * 100),
+        seo: Math.round((categories.seo?.score || 0) * 100),
+      };
+    } catch (err) {
+      console.warn("Lighthouse fetch failed:", err);
+      return null;
+    }
+  }
+
   /**
-   * Orchestrates the dual-analysis process
+   * Orchestrates the dual-analysis process + Lighthouse
    */
   static async runFullAudit(
     visionProvider: AiProvider,
@@ -104,10 +127,10 @@ OUTPUT (JSON)
 
     // Task 1: Vision Analysis
     const frontendPrompt = this.getFrontendPrompt(
-      contextData.url, 
-      contextData.title, 
-      contextData.text, 
-      contextData.signals, 
+      contextData.url,
+      contextData.title,
+      contextData.text,
+      contextData.signals,
       visionProvider.supportsVision !== false
     );
 
@@ -130,12 +153,24 @@ OUTPUT (JSON)
         model: codeProvider.model,
         prompt: this.getBackendPrompt(githubCodeText)
       }));
+    } else {
+      tasks.push(Promise.resolve(null)); // Keep array index alignment
+    }
+
+    // Task 3: Lighthouse PSI Analysis
+    tasks.push(this.fetchLighthouseScores(contextData.url));
+
+    // Task 4: Backend Static Analysis (Synchronous, but we run it alongside)
+    let backendMetrics = null;
+    if (githubCodeText) {
+      backendMetrics = StaticAnalyzer.analyze(githubCodeText);
     }
 
     const results = await Promise.allSettled(tasks);
-    
+
     const visionTaskRes = results[0].status === 'fulfilled' ? results[0].value : null;
     const codeTaskRes = results[1]?.status === 'fulfilled' ? results[1].value : null;
+    const lighthouseMetrics = results[2]?.status === 'fulfilled' ? results[2].value : null;
 
     if (!visionTaskRes) throw new Error("Vision analysis failed to return a result.");
 
@@ -161,10 +196,10 @@ OUTPUT (JSON)
       }
     }
 
-    return this.mergeResults(visionResult, codeResult, visionProvider.name, codeProvider?.name);
+    return this.mergeResults(visionResult, codeResult, lighthouseMetrics, backendMetrics, visionProvider.name, codeProvider?.name);
   }
 
-  private static mergeResults(vision: any, code: any, visionName: string, codeName?: string): any {
+  private static mergeResults(vision: any, code: any, lighthouse: any, backendMetrics: any, visionName: string, codeName?: string): any {
     const allIssues = [...(vision.issues || [])];
     if (code && code.issues) allIssues.push(...code.issues);
 
@@ -176,11 +211,13 @@ OUTPUT (JSON)
       issues: allIssues,
       launchScore: finalScore,
       verdict: vision.verdict, // Use frontend verdict as base
-      improvementPrompt: code 
+      improvementPrompt: code
         ? `Frontend:\n${vision.improvementPrompt}\n\nBackend:\n${code.improvementPrompt}`
         : vision.improvementPrompt,
       analysisMode: "ai-split",
       provider: code ? `${visionName} + ${codeName}` : visionName,
+      lighthouse: lighthouse || undefined,
+      backendMetrics: backendMetrics || undefined,
     };
   }
 }

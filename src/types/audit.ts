@@ -76,9 +76,24 @@ export const ResultSchema = z.object({
     .describe("One complete prompt the user can paste into MeDo to improve the whole app"),
 });
 
+export type LighthouseMetrics = {
+  performance: number;
+  accessibility: number;
+  bestPractices: number;
+  seo: number;
+};
+
+export type BackendMetrics = {
+  security: number;
+  codeQuality: number;
+  maintainability: number;
+};
+
 export type AuditResponse = z.infer<typeof ResultSchema> & {
   analysisMode?: string;
   provider?: string;
+  lighthouse?: LighthouseMetrics;
+  backendMetrics?: BackendMetrics;
 };
 
 export type PageSignals = {
@@ -94,6 +109,6 @@ export type PageSignals = {
 
 /** Frontend issue categories for filtering */
 export const FRONTEND_CATEGORIES = new Set<IssueCategory>([
-  "copy", "trust", "cta", "mobile", "empty-state", 
+  "copy", "trust", "cta", "mobile", "empty-state",
   "error-state", "accessibility", "performance",
 ]);

@@ -27,6 +27,8 @@ async function attachSavedAuditId(url: string, result: AuditResponse) {
       improvementPrompt: result.improvementPrompt,
       analysisMode: result.analysisMode,
       provider: result.provider,
+      lighthouse: result.lighthouse,
+      backendMetrics: result.backendMetrics,
     });
 
     return auditId ? { ...result, auditId } : result;
@@ -72,7 +74,7 @@ export async function POST(req: NextRequest) {
     const url = formData.get("url") as string | null;
     const userScreenshot = formData.get("screenshot") as string | null;
     const githubUrl = formData.get("githubUrl") as string | null;
-    
+
     // Extract BYOK settings from form
     const formVisionProvider = formData.get("visionProvider") as string | null;
     const formVisionKey = formData.get("visionKey") as string | null;
@@ -95,16 +97,16 @@ export async function POST(req: NextRequest) {
     }
 
     // Determine effective models to use (form input > db > default server keys)
-    const effectiveVisionProvider = formVisionProvider && formVisionProvider !== "default" 
-      ? formVisionProvider 
+    const effectiveVisionProvider = formVisionProvider && formVisionProvider !== "default"
+      ? formVisionProvider
       : (userSettings?.visionProvider && userSettings.visionProvider !== "default" ? userSettings.visionProvider : null);
-    
+
     const effectiveVisionKey = formVisionKey || userSettings?.visionKey || null;
 
     const effectiveCodeProvider = formCodeProvider && formCodeProvider !== "default"
       ? formCodeProvider
       : (userSettings?.codeProvider && userSettings.codeProvider !== "default" ? userSettings.codeProvider : null);
-      
+
     const effectiveCodeKey = formCodeKey || userSettings?.codeKey || null;
 
     let validUrl = url.trim();
@@ -175,82 +177,82 @@ export async function POST(req: NextRequest) {
     if (userScreenshot && typeof userScreenshot === "string" && userScreenshot.length > 100) {
       console.log("User provided screenshot - using for analysis...");
       screenshots.push(userScreenshot);
-    } 
-    
-     if (screenshots.length === 0) {
-       try {
-         console.log(`Launching browser for ${validUrl}...`);
-         const browser = await chromium.launch({ 
-           headless: true,
-           args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] 
-         });
-         const context = await browser.newContext({
-           viewport: { width: 1280, height: 800 },
-           userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-         });
-         const page = await context.newPage();
+    }
 
-         try {
-           console.log(`Navigating to ${validUrl}...`);
-           const navigationPromise = page.goto(validUrl, { waitUntil: "domcontentloaded", timeout: 25000 });
-           
-           // Add timeout for navigation
-           await Promise.race([
-             navigationPromise,
-             new Promise((_, reject) => 
-               setTimeout(() => reject(new Error("Navigation timeout")), 25000)
-             )
-           ]);
-           
-           console.log("Waiting for 2 seconds for JS hydration...");
-           await page.waitForTimeout(2000);
+    if (screenshots.length === 0) {
+      try {
+        console.log(`Launching browser for ${validUrl}...`);
+        const browser = await chromium.launch({
+          headless: true,
+          args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+        });
+        const context = await browser.newContext({
+          viewport: { width: 1280, height: 800 },
+          userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        });
+        const page = await context.newPage();
 
-           console.log("Taking screenshot...");
-           const screenshot = await page.screenshot({ type: "png" });
-           screenshots.push(screenshot.toString("base64"));
+        try {
+          console.log(`Navigating to ${validUrl}...`);
+          const navigationPromise = page.goto(validUrl, { waitUntil: "domcontentloaded", timeout: 25000 });
 
-           console.log("Extracting content...");
-           const html = await page.content();
-           const $ = cheerio.load(html);
-           pageSignals = getPageSignals($);
-           pageTitle = pageSignals.title;
-           pageText = pageSignals.text.substring(0, 8000);
-         } catch (navErr: unknown) {
-           // More specific error handling for navigation issues
-           if (navErr instanceof Error) {
-             if (navErr.message.includes("timeout") || navErr.message.includes("Timeout")) {
-               fetchReason = `Navigation timeout: The website took too long to load. Please check if the URL is correct and the server is responding.`;
-             } else if (navErr.message.includes("net::ERR_NAME_NOT_RESOLVED") || 
-                       navErr.message.includes("ENOTFOUND")) {
-               fetchReason = `DNS resolution failed: Unable to resolve the domain name. Please check if the URL is correct and the domain exists.`;
-             } else if (navErr.message.includes("net::ERR_CONNECTION_REFUSED")) {
-               fetchReason = `Connection refused: The server is not accepting connections. Please check if the server is running and accessible.`;
-             } else if (navErr.message.includes("net::ERR_CONNECTION_TIMED_OUT")) {
-               fetchReason = `Connection timed out: Unable to establish a connection to the server. Please check network connectivity and server status.`;
-             } else {
-               fetchReason = `Navigation failed: ${navErr.message}`;
-             }
-           } else {
-             fetchReason = "Navigation failed: Unknown error occurred while loading the page";
-           }
-         } finally {
-           await browser.close().catch(closeErr => {
-             console.warn("Error closing browser:", closeErr);
-           });
-         }
-       } catch (browserError: unknown) {
-         // More specific error handling for browser initialization
-         if (browserError instanceof Error) {
-           if (browserError.message.includes("Executable doesn't exist")) {
-             fetchReason = "Browser initialization failed: Playwright browsers are not installed. Please run 'npx playwright install' to install required browsers.";
-           } else {
-             fetchReason = `Browser initialization failed: ${browserError.message}`;
-           }
-         } else {
-           fetchReason = "Browser initialization failed: Unknown error occurred while initializing the browser";
-         }
-       }
-     }
+          // Add timeout for navigation
+          await Promise.race([
+            navigationPromise,
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error("Navigation timeout")), 25000)
+            )
+          ]);
+
+          console.log("Waiting for 2 seconds for JS hydration...");
+          await page.waitForTimeout(2000);
+
+          console.log("Taking screenshot...");
+          const screenshot = await page.screenshot({ type: "png" });
+          screenshots.push(screenshot.toString("base64"));
+
+          console.log("Extracting content...");
+          const html = await page.content();
+          const $ = cheerio.load(html);
+          pageSignals = getPageSignals($);
+          pageTitle = pageSignals.title;
+          pageText = pageSignals.text.substring(0, 8000);
+        } catch (navErr: unknown) {
+          // More specific error handling for navigation issues
+          if (navErr instanceof Error) {
+            if (navErr.message.includes("timeout") || navErr.message.includes("Timeout")) {
+              fetchReason = `Navigation timeout: The website took too long to load. Please check if the URL is correct and the server is responding.`;
+            } else if (navErr.message.includes("net::ERR_NAME_NOT_RESOLVED") ||
+              navErr.message.includes("ENOTFOUND")) {
+              fetchReason = `DNS resolution failed: Unable to resolve the domain name. Please check if the URL is correct and the domain exists.`;
+            } else if (navErr.message.includes("net::ERR_CONNECTION_REFUSED")) {
+              fetchReason = `Connection refused: The server is not accepting connections. Please check if the server is running and accessible.`;
+            } else if (navErr.message.includes("net::ERR_CONNECTION_TIMED_OUT")) {
+              fetchReason = `Connection timed out: Unable to establish a connection to the server. Please check network connectivity and server status.`;
+            } else {
+              fetchReason = `Navigation failed: ${navErr.message}`;
+            }
+          } else {
+            fetchReason = "Navigation failed: Unknown error occurred while loading the page";
+          }
+        } finally {
+          await browser.close().catch(closeErr => {
+            console.warn("Error closing browser:", closeErr);
+          });
+        }
+      } catch (browserError: unknown) {
+        // More specific error handling for browser initialization
+        if (browserError instanceof Error) {
+          if (browserError.message.includes("Executable doesn't exist")) {
+            fetchReason = "Browser initialization failed: Playwright browsers are not installed. Please run 'npx playwright install' to install required browsers.";
+          } else {
+            fetchReason = `Browser initialization failed: ${browserError.message}`;
+          }
+        } else {
+          fetchReason = "Browser initialization failed: Unknown error occurred while initializing the browser";
+        }
+      }
+    }
 
     // Build rule-based issues and measured result (used as fallback)
     const ruleIssues = buildRuleIssues(pageSignals, fetchReason || undefined);
@@ -265,32 +267,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(await attachSavedAuditId(validUrl, fallbackResult));
     }
 
-     // Resolve AI Models
-     const visionModel = AiService.getVisionModel(effectiveVisionProvider || undefined, effectiveVisionKey);
-     const codeModel = effectiveCodeProvider ? AiService.getCodeModel(effectiveCodeProvider, effectiveCodeKey) : null;
+    // Resolve AI Models
+    const visionModel = AiService.getVisionModel(effectiveVisionProvider || undefined, effectiveVisionKey);
+    const codeModel = effectiveCodeProvider ? AiService.getCodeModel(effectiveCodeProvider, effectiveCodeKey) : null;
 
-     if (!visionModel) {
-       console.error("No AI models configured! Check your keys.");
-       return NextResponse.json(await attachSavedAuditId(validUrl, fallbackResult));
-     }
+    if (!visionModel) {
+      console.error("No AI models configured! Check your keys.");
+      return NextResponse.json(await attachSavedAuditId(validUrl, fallbackResult));
+    }
 
-     // Run Analysis via AuditService
-     try {
-       const auditResult = await AuditService.runFullAudit(
-         visionModel,
-         codeModel,
-         screenshots,
-         githubCodeText,
-         {
-           url: validUrl,
-           title: pageTitle,
-           text: pageText,
-           signals: pageSignals
-         }
-       );
+    // Run Analysis via AuditService
+    try {
+      const auditResult = await AuditService.runFullAudit(
+        visionModel,
+        codeModel,
+        screenshots,
+        githubCodeText,
+        {
+          url: validUrl,
+          title: pageTitle,
+          text: pageText,
+          signals: pageSignals
+        }
+      );
 
-       // Save and Return
-       return NextResponse.json(await attachSavedAuditId(validUrl, auditResult));
+      // Save and Return
+      return NextResponse.json(await attachSavedAuditId(validUrl, auditResult));
 
     } catch (llmError: unknown) {
       console.error("[Analysis Error]", llmError);
