@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ScoreGauge } from "@/components/score-gauge";
 import { Button } from "@/components/ui/button";
@@ -174,25 +174,26 @@ function ErrorState({ error }: { error: string }) {
 // ─── Main Page ────────────────────────────────────────
 export default function AuditPage() {
   const router = useRouter();
-  const [result, setResult] = useState<AuditResult | null>(null);
-  const [status, setStatus] = useState<"loading"|"empty"|"error"|"ready">("loading");
-  const [errorMsg, setErrorMsg] = useState("");
-  const [thinkingOpen, setThinkingOpen] = useState(false);
-  const [expandedIssue, setExpandedIssue] = useState<number | null>(null);
 
-  useEffect(() => {
+  const getInitialData = () => {
+    if (typeof window === "undefined") return { status: "loading" as const, result: null, errorMsg: "" };
     try {
       const raw = localStorage.getItem("medo_audit_result");
-      if (!raw) { setStatus("empty"); return; }
+      if (!raw) return { status: "empty" as const, result: null, errorMsg: "" };
       const parsed: AuditResult = JSON.parse(raw);
-      if (parsed.error && !parsed.issues?.length) { setErrorMsg(parsed.error); setStatus("error"); return; }
-      setResult(parsed); setStatus("ready");
-    } catch (err) {
-      console.error("Failed to parse audit data:", err);
-      setErrorMsg("Could not load audit data. The stored result may be corrupted.");
-      setStatus("error");
+      if (parsed.error && !parsed.issues?.length) return { status: "error" as const, result: null, errorMsg: parsed.error };
+      return { status: "ready" as const, result: parsed, errorMsg: "" };
+    } catch {
+      return { status: "error" as const, result: null, errorMsg: "Could not load audit data. The stored result may be corrupted." };
     }
-  }, []);
+  };
+
+  const initialData = getInitialData();
+  const status = initialData.status;
+  const result = initialData.result;
+  const errorMsg = initialData.errorMsg;
+  const [thinkingOpen, setThinkingOpen] = useState(false);
+  const [expandedIssue, setExpandedIssue] = useState<number | null>(null);
 
   if (status === "loading") return <AuditSkeleton />;
   if (status === "empty") return <EmptyState />;

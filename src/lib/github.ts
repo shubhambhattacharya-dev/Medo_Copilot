@@ -1,6 +1,6 @@
 export async function fetchGithubRepoCode(githubUrl: string): Promise<{ text: string, reason?: string }> {
   try {
-    let url = githubUrl.replace("https://github.com/", "").replace(/\/$/, "");
+    const url = githubUrl.replace("https://github.com/", "").replace(/\/$/, "");
     const parts = url.split("/");
     if (parts.length < 2) return { text: "", reason: "Invalid GitHub URL format." };
     const owner = parts[0];
@@ -20,7 +20,12 @@ export async function fetchGithubRepoCode(githubUrl: string): Promise<{ text: st
       return { text: "", reason: "Could not read repository tree (maybe GitHub API rate limit)." };
     }
 
-    const backendFiles = treeData.tree.filter((file: any) => {
+    interface GitTreeItem {
+      path: string;
+      type: string;
+    }
+
+    const backendFiles = treeData.tree.filter((file: GitTreeItem) => {
       if (file.type !== "blob") return false;
       const path = file.path.toLowerCase();
       if (path.includes("node_modules") || path.includes(".next") || path.includes("dist") || path.includes("build")) return false;
@@ -40,7 +45,8 @@ export async function fetchGithubRepoCode(githubUrl: string): Promise<{ text: st
     }
 
     return { text: codeText.substring(0, 15000) };
-  } catch (e: any) {
-    return { text: "", reason: `GitHub fetch error: ${e.message}` };
+  } catch (e: unknown) {
+    const errMsg = e instanceof Error ? e.message : "Unknown error";
+    return { text: "", reason: `GitHub fetch error: ${errMsg}` };
   }
 }

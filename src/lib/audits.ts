@@ -73,3 +73,83 @@ export async function saveAudit(input: SaveAuditInput) {
 
   return rows[0]?.id as string | null;
 }
+
+export async function ensureUserKeysTable() {
+  const db = getSql();
+  if (!db) return db;
+
+  await db`
+    CREATE TABLE IF NOT EXISTS user_api_keys (
+      user_id text PRIMARY KEY,
+      google_key text,
+      groq_key text,
+      openai_key text,
+      anthropic_key text,
+      model_preference text DEFAULT 'auto',
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+  `;
+
+  return db;
+}
+
+export async function getUserApiKeys(userId: string) {
+  const db = await ensureUserKeysTable();
+  if (!db) return null;
+
+  const rows = (await db`
+    SELECT * FROM user_api_keys WHERE user_id = ${userId}
+  `) as Array<{
+    user_id: string;
+    google_key: string | null;
+    groq_key: string | null;
+    openai_key: string | null;
+    anthropic_key: string | null;
+    model_preference: string;
+  }>;
+
+  if (!rows[0]) return null;
+  const row = rows[0];
+  return {
+    userId: row.user_id,
+    googleKey: row.google_key,
+    groqKey: row.groq_key,
+    openaiKey: row.openai_key,
+    anthropicKey: row.anthropic_key,
+    modelPreference: row.model_preference,
+  };
+}
+
+export async function upsertUserApiKeys(userId: string, data: {
+  googleKey?: string;
+  groqKey?: string;
+  openaiKey?: string;
+  anthropicKey?: string;
+  modelPreference?: string;
+}) {
+  const db = await ensureUserKeysTable();
+  if (!db) return null;
+
+  await db`
+    INSERT INTO user_api_keys (user_id, google_key, groq_key, openai_key, anthropic_key, model_preference, updated_at)
+    VALUES (
+      ${userId},
+      ${data.googleKey ?? null},
+      ${data.groqKey ?? null},
+      ${data.openaiKey ?? null},
+      ${data.anthropicKey ?? null},
+      ${data.modelPreference ?? 'auto'},
+      now()
+    )
+    ON CONFLICT (user_id) DO UPDATE SET
+      google_key = COALESCE(EXCLUDED.google_key, user_api_keys.google_key),
+      groq_key = COALESCE(EXCLUDED.groq_key, user_api_keys.groq_key),
+      openai_key = COALESCE(EXCLUDED.openai_key, user_api_keys.openai_key),
+      anthropic_key = COALESCE(EXCLUDED.anthropic_key, user_api_keys.anthropic_key),
+      model_preference = COALESCE(EXCLUDED.model_preference, user_api_keys.model_preference),
+      updated_at = now()
+  `;
+
+  return { success: true };
+}

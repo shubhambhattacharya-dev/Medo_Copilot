@@ -17,14 +17,24 @@ import {
   BadgeCheck,
   BarChart3,
   CheckCircle2,
+  ChevronDown,
   Copy,
   Gauge,
+  Key,
   LayoutPanelLeft,
   Loader2,
+  Settings,
   ShieldCheck,
   Smartphone,
   Sparkles,
 } from "lucide-react";
+
+const AI_PROVIDERS = [
+  { value: "default", label: "Default (Free Tier)", hint: "Uses server API keys" },
+  { value: "gemini", label: "Google Gemini", hint: "Best for vision + structured output" },
+  { value: "groq", label: "Groq (Llama)", hint: "Fastest inference speed" },
+  { value: "openrouter", label: "OpenRouter", hint: "Access to 100+ models" },
+];
 
 const checks = [
   {
@@ -90,6 +100,9 @@ export default function Home() {
   const [screenshots, setScreenshots] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState(0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [userProvider, setUserProvider] = useState("default");
+  const [userApiKey, setUserApiKey] = useState("");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -131,6 +144,11 @@ export default function Home() {
       formData.append("url", submittedUrl);
       if (githubUrl.trim()) {
         formData.append("githubUrl", githubUrl.trim());
+      }
+      // BYOK: send user's API key and provider preference
+      if (userProvider !== "default" && userApiKey.trim()) {
+        formData.append("userProvider", userProvider);
+        formData.append("userApiKey", userApiKey.trim());
       }
 
       for (let i = 0; i < screenshots.length; i++) {
@@ -214,6 +232,13 @@ export default function Home() {
               <BadgeCheck className="h-3.5 w-3.5 text-emerald-500" />
               Trusted by builders shipping faster
             </div>
+            <button
+              onClick={() => router.push("/settings")}
+              className="flex items-center gap-2 rounded-full border border-border/70 bg-muted/50 px-3 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Settings className="h-3.5 w-3.5" />
+              <span className="hidden md:inline">Settings</span>
+            </button>
             <ThemeToggle />
           </div>
         </header>
@@ -294,6 +319,65 @@ export default function Home() {
                   disabled={loading}
                   className="h-12 w-full rounded-2xl bg-background/80 px-4 text-base"
                 />
+
+                {/* ── Advanced Settings (BYOK) ── */}
+                <div className="w-full">
+                  <button
+                    type="button"
+                    onClick={() => setSettingsOpen(!settingsOpen)}
+                    className="inline-flex w-full items-center justify-between rounded-xl border border-border/50 bg-muted/20 px-4 py-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Settings className="h-4 w-4" />
+                      Advanced Settings (Bring Your Own Key)
+                    </span>
+                    <ChevronDown
+                      className={`h-4 w-4 transition-transform ${settingsOpen ? "rotate-180" : ""}`}
+                    />
+                  </button>
+                  
+                  {settingsOpen && (
+                    <div className="mt-2 space-y-4 rounded-xl border border-border/50 bg-background/50 p-4 backdrop-blur">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-foreground/80">AI Provider</label>
+                        <select
+                          value={userProvider}
+                          onChange={(e) => setUserProvider(e.target.value)}
+                          className="w-full rounded-lg border border-border/50 bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                        >
+                          {AI_PROVIDERS.map((p) => (
+                            <option key={p.value} value={p.value}>
+                              {p.label}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-[10px] text-muted-foreground">
+                          {AI_PROVIDERS.find(p => p.value === userProvider)?.hint}
+                        </p>
+                      </div>
+
+                      {userProvider !== "default" && (
+                        <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1">
+                          <label className="flex items-center gap-1.5 text-xs font-semibold text-foreground/80">
+                            <Key className="h-3 w-3" />
+                            API Key
+                          </label>
+                          <Input
+                            type="password"
+                            placeholder={`Enter your ${AI_PROVIDERS.find(p => p.value === userProvider)?.label} API key`}
+                            value={userApiKey}
+                            onChange={(e) => setUserApiKey(e.target.value)}
+                            className="h-10 text-sm"
+                          />
+                          <p className="text-[10px] text-amber-500/80">
+                            Keys are sent directly to the API and never stored on our servers.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 <Button
                   type="submit"
                   size="lg"

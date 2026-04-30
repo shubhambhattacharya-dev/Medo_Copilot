@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateObject, generateText, type LanguageModel } from "ai";
-import { google } from "@ai-sdk/google";
-import { groq } from "@ai-sdk/groq";
+import { google, createGoogleGenerativeAI } from "@ai-sdk/google";
+import { groq, createGroq } from "@ai-sdk/groq";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import * as cheerio from "cheerio";
 import { chromium } from "playwright";
-import { saveAudit } from "@/lib/audits";
+import { saveAudit, getUserApiKeys } from "@/lib/audits";
 import { fetchGithubRepoCode } from "@/lib/github";
 
 const IssueCategorySchema = z.enum([
@@ -425,138 +425,7 @@ function parseJsonFromText(text: string) {
   }
 }
 
-const COPY_ANALYSIS_PROMPT = (url: string, title: string, text: string, ctas: string[], links: string[]) => `
-Analyze the TEXT CONTENT of this website for UX/copy issues only.
 
-URL: ${url}
-Title: ${title}
-CTA buttons found: ${ctas.join(", ") || "none"}
-Links: ${links.join(", ").slice(0, 200)}
-
-Text content to analyze:
-${text.slice(0, 4000)}
-
-Check ONLY these text-based elements:
-1. COPY: Is headline specific? Is value prop clear? Any generic buzzwords?
-2. TRUST: Are there testimonials, reviews, logos in the text? Any "worked with" or "trusted by"?
-3. CTA PHRASING: Are CTA buttons action-oriented (Get, Start, Book) or vague?
-4. METADATA: Is there a meta description? Is it descriptive?
-
-Return ONLY this JSON (no extra text):
-{"copyIssues": [{"title": "issue", "severity": "high|medium|low", "description": "why", "fixPrompt": "fix", "evidence": "exact text", "confidence": "high|medium|low"}], "trustIssues": [], "ctaIssues": [], "overallScore": 70-90}
-`;
-
-const VISUAL_ANALYSIS_PROMPT = (url: string, title: string) => `
-You are a senior UX designer analyzing a website SCREENSHOT for visual/design issues.
-
-URL: ${url}
-Title: ${title}
-
-Analyze the SCREENSHOT for:
-1. VISUAL HIERARCHY: Is the most important content immediately visible? Is there a clear visual flow?
-2. CTA VISIBILITY: Is the primary CTA button prominent (color, size, contrast)? Is it "above the fold"?
-3. MOBILE LAYOUT: Is the layout readable on mobile? Are tap targets adequate size?
-4. EMPTY STATES: Is there a loading state? Empty product state?
-5. TRUST VISUALS: Are testimonials/reviews visible? Any logos/certificates shown?
-6. COLOR CONTRAST: Is text readable? Are buttons clearly distinguishable?
-7. SPACING: Is there enough white space? Or is it cramped?
-
-Return ONLY this JSON (no extra text):
-{"visualIssues": [{"title": "issue", "severity": "high|medium|low", "description": "why", "fixPrompt": "fix", "evidence": "what you see", "confidence": "high|medium|low"}], "designScore": number, "mobileScore": number, "ctaScore": number}
-`;
-
-async function multiStepAnalyze(
-  model: LanguageModel,
-  structuredOutput: boolean,
-  url: string,
-  title: string,
-  text: string,
-  ctas: string[],
-  links: string[],
-  screenshots?: string[]
-) {
-  const copyPrompt = COPY_ANALYSIS_PROMPT(url, title, text, ctas, links);
-   
-  const copyResultText = (
-    await generateText({
-      model,
-      messages: [{ role: "user", content: copyPrompt }]
-    })
-  ).text;
-
-  let copyIssues: AuditIssue[] = [];
-  try {
-    const copyData = JSON.parse(copyResultText.replace(/^```json\s*/, "").replace(/```$/, ""));
-    copyIssues = [
-      ...(copyData.copyIssues || []),
-      ...(copyData.trustIssues || []),
-      ...(copyData.ctaIssues || [])
-    ].map((i: { title?: string; severity?: string; description?: string; fixPrompt?: string; evidence?: string; confidence?: string }) => ({
-      category: i.title?.toLowerCase().includes("trust") ? "trust" as const : 
-              i.title?.toLowerCase().includes("cta") ? "cta" as const : "copy" as const,
-      title: i.title || "Unknown issue",
-      severity: (i.severity as "high" | "medium" | "low") || "medium",
-      description: i.description || "",
-      fixPrompt: i.fixPrompt || "",
-      evidence: i.evidence || "",
-      confidence: (i.confidence as "high" | "medium" | "low") || "medium"
-    }));
-  } catch {
-    console.warn("Copy analysis parse failed, using empty issues");
-  }
-
-  let visualIssues: AuditIssue[] = [];
-  if (screenshots && screenshots.length > 0) {
-    try {
-      const visualResult = (
-        await generateText({
-          model,
-          messages: [{
-            role: "user",
-            content: [{
-              type: "text", text: VISUAL_ANALYSIS_PROMPT(url, title) },
-              ...screenshots.map(s => ({ type: "image" as const, image: Buffer.from(s, "base64"), mediaType: "image/png" }))
-            ]
-          }]
-        })
-      ).text;
-      
-      const visualData = JSON.parse(visualResult.replace(/^```json\s*/, "").replace(/```$/, ""));
-      visualIssues = (visualData.visualIssues || []).map((i: { title?: string; severity?: string; description?: string; fixPrompt?: string; evidence?: string; confidence?: string }) => ({
-        category: i.title?.toLowerCase().includes("mobile") ? "mobile" as const :
-                i.title?.toLowerCase().includes("cta") ? "cta" as const : "accessibility" as const,
-        title: i.title || "Unknown issue",
-        severity: (i.severity as "high" | "medium" | "low") || "medium",
-        description: i.description || "",
-        fixPrompt: i.fixPrompt || "",
-        evidence: i.evidence || "",
-        confidence: (i.confidence as "high" | "medium" | "low") || "medium"
-      }));
-    } catch {
-      console.warn("Visual analysis failed or no screenshots");
-    }
-  }
-
-  const allIssues = [...copyIssues, ...visualIssues];
-  const baseScore = structuredOutput ? 85 : 80;
-  const penalty = allIssues.reduce((total, issue) => {
-    if (issue.severity === "high") return total + 10;
-    if (issue.severity === "medium") return total + 5;
-    return total + 2;
-  }, 0);
-  
-  const launchScore = Math.max(30, Math.min(95, baseScore - penalty));
-  const verdict = getVerdict(launchScore, allIssues);
-
-  return {
-    thoughtProcess: [`Step 1: Analyzed text content for ${copyIssues.length} copy/trust/CTA issues`, `Step 2: Analyzed ${screenshots?.length || 0} screenshots for ${visualIssues.length} visual issues`],
-    launchScore,
-    verdict,
-    summary: `Found ${allIssues.length} issues. ${verdict === "launch-ready" ? "Ready for launch" : "Needs fixes before launch"}.`,
-    issues: allIssues,
-    improvementPrompt: `Improve: ${allIssues.slice(0, 3).map(i => `${i.title}: ${i.fixPrompt}`).join(". ")}`,
-  };
-}
 
 async function attachSavedAuditId(url: string, result: AuditResponse) {
   try {
@@ -754,10 +623,24 @@ export async function POST(req: NextRequest) {
     const url = formData.get("url") as string | null;
     const userScreenshot = formData.get("screenshot") as string | null;
     const githubUrl = formData.get("githubUrl") as string | null;
+    const userProvider = formData.get("userProvider") as string | null;
+    const userApiKey = formData.get("userApiKey") as string | null;
 
     if (!url || typeof url !== "string") {
       return NextResponse.json({ error: "URL is required" }, { status: 400 });
     }
+
+    // Fetch user API keys from database (if set)
+    let userKeys = null;
+    try {
+      userKeys = await getUserApiKeys("default-user");
+    } catch (e) {
+      console.warn("Could not fetch user API keys:", e);
+    }
+
+    // Use user keys from form > database > system
+    const effectiveUserProvider = userProvider || userKeys?.modelPreference || null;
+    const effectiveUserApiKey = userApiKey || userKeys?.googleKey || userKeys?.groqKey || userKeys?.openaiKey || userKeys?.anthropicKey || null;
 
     let validUrl = url.trim();
     if (!validUrl.startsWith("http://") && !validUrl.startsWith("https://")) {
@@ -812,7 +695,7 @@ export async function POST(req: NextRequest) {
         if (ghResult.text) {
           githubCodeText = ghResult.text;
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error("GitHub fetch failed:", err);
       }
     }
@@ -1135,14 +1018,53 @@ Measured signals:
            })("Qwen/Qwen2.5-VL-72B-Instruct"),
            false,
            true
-         )
-       );
-     }
+)
+        );
+      }
 
-    if (!aiModels.length) {
-      console.error("No AI models configured! Check your .env.local keys.");
-      return NextResponse.json(await attachSavedAuditId(validUrl, measuredResult));
-    }
+      // 4. USER BYOK (Bring Your Own Key) - Put at the very front to prioritize
+      const actualProvider = effectiveUserProvider;
+      const actualApiKey = effectiveUserApiKey;
+
+      if (actualProvider && actualApiKey) {
+        let byokModel: LanguageModel | null = null;
+        let supportsStructured = false;
+
+        try {
+          if (actualProvider === "gemini") {
+            const customGoogle = createGoogleGenerativeAI({ apiKey: actualApiKey });
+            byokModel = customGoogle(process.env.GOOGLE_GENERATIVE_AI_MODEL || "gemini-2.0-flash");
+            supportsStructured = true;
+          } else if (actualProvider === "groq") {
+            const customGroq = createGroq({ apiKey: actualApiKey });
+            byokModel = customGroq(process.env.GROQ_MODEL || "llama-3.2-90b-vision-preview");
+          } else if (actualProvider === "openai") {
+            const customOpenAI = createOpenAI({ apiKey: actualApiKey });
+            byokModel = customOpenAI("gpt-4o");
+            supportsStructured = true;
+          } else if (actualProvider === "anthropic") {
+            const customAnthropic = createOpenAI({
+              baseURL: "https://api.anthropic.com/v1",
+              apiKey: actualApiKey,
+            });
+            byokModel = customAnthropic("claude-3-5-sonnet-20241022");
+            supportsStructured = true;
+          }
+
+          if (byokModel) {
+            aiModels.unshift(
+              createAIProvider(`byok-${actualProvider}`, byokModel, supportsStructured, true)
+            );
+          }
+        } catch (err) {
+          console.warn("Failed to initialize BYOK provider:", err);
+        }
+      }
+
+      if (!aiModels.length) {
+        console.error("No AI models configured! Check your .env.local keys.");
+        return NextResponse.json(await attachSavedAuditId(validUrl, measuredResult));
+      }
 
     console.log(`Using AI models: ${aiModels.map(m => m.name).join(", ")}`);
 
