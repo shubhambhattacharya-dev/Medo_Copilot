@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { SignInButton, UserButton, useUser, Show } from "@clerk/nextjs";
 import {
   Card,
   CardDescription,
@@ -13,22 +12,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { toast } from "sonner";
-import {
-  ArrowRight,
-  BadgeCheck,
-  BarChart3,
-  CheckCircle2,
-  ChevronDown,
-  Copy,
-  Gauge,
-  Key,
-  LayoutPanelLeft,
-  Loader2,
-  Settings,
-  ShieldCheck,
-  Smartphone,
-  Sparkles,
-} from "lucide-react";
+import { ArrowRight, BadgeCheck, BarChart3, CheckCircle2, ChevronDown, Copy, Gauge, Key, LayoutPanelLeft, Loader2, Settings, ShieldCheck, Smartphone, Sparkles } from "lucide-react";
 
 const AI_PROVIDERS = [
   { value: "default", label: "Default (Free Tier)", hint: "Uses server API keys" },
@@ -101,7 +85,6 @@ export default function Home() {
   const [screenshots, setScreenshots] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState(0);
-  const { isSignedIn } = useUser();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [visionProvider, setVisionProvider] = useState("default");
   const [visionKey, setVisionKey] = useState("");
@@ -112,23 +95,19 @@ export default function Home() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Fetch user settings on mount if signed in
+  // Fetch user settings on mount
   useEffect(() => {
-    if (!isSignedIn) return;
-    
     fetch("/api/user/settings")
       .then(res => res.json())
       .then(data => {
         if (!data.error) {
           if (data.visionProvider) setVisionProvider(data.visionProvider);
           if (data.codeProvider) setCodeProvider(data.codeProvider);
-          // Don't set keys since backend only sends booleans (hasVisionKey),
-          // but we know they exist.
           setKeysSaved(data.hasVisionKey || data.hasCodeKey);
         }
       })
       .catch(console.error);
-  }, [isSignedIn]);
+  }, []);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -287,22 +266,15 @@ export default function Home() {
               Trusted by builders shipping faster
             </div>
             
-            <ThemeToggle />
+            <button
+              onClick={() => router.push("/settings")}
+              className="flex items-center gap-2 rounded-full border border-border/70 bg-muted/50 px-3 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Settings className="h-3.5 w-3.5" />
+              <span>Settings</span>
+            </button>
             
-            <Show when="signed-out">
-              <div className="rounded-full border border-border/70 bg-muted/50 px-3 py-1 text-xs text-muted-foreground hover:bg-muted/80 transition-colors">
-                <SignInButton mode="modal" />
-              </div>
-            </Show>
-            <Show when="signed-in">
-              <UserButton 
-                appearance={{
-                  elements: {
-                    userButtonAvatarBox: "h-8 w-8"
-                  }
-                }}
-              />
-            </Show>
+            <ThemeToggle />
           </div>
         </header>
 
@@ -399,16 +371,14 @@ export default function Home() {
                     />
                   </button>
                   
-                  {settingsOpen && (
+{settingsOpen && (
                     <div className="mt-2 space-y-5 rounded-xl border border-border/50 bg-background/50 p-4 backdrop-blur">
-                      
-                      {!isSignedIn && (
-                        <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-500">
-                          <strong>Note:</strong> You are not signed in. Any keys you enter will be used for this analysis only and won&apos;t be saved.
-                        </div>
-                      )}
+                       
+                       <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-500">
+                         <strong>Tip:</strong> Go to Settings page to save API keys securely for future use.
+                       </div>
 
-                      {/* Vision Provider (Frontend) */}
+                       {/* Vision Provider (Frontend) */}
                       <div className="space-y-3">
                         <h4 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
                           <LayoutPanelLeft className="h-4 w-4 text-cyan-500" />
@@ -486,7 +456,7 @@ export default function Home() {
                         </div>
                       </div>
 
-                      {isSignedIn && (visionKey || codeKey || visionProvider !== "default" || codeProvider !== "default") && (
+                      {(visionKey || codeKey || visionProvider !== "default" || codeProvider !== "default") && (
                         <div className="pt-2">
                           <Button 
                             type="button" 
