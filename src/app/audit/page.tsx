@@ -15,11 +15,17 @@ import {
   Construction,
   Copy,
   ExternalLink,
+  Eye,
+  FileCode,
   Info,
   Lightbulb,
+  MessageSquare,
+  MousePointerClick,
   Shield,
   ShieldAlert,
+  Smartphone,
   Sparkles,
+  Database,
   XCircle,
   Zap,
 } from "lucide-react";
@@ -80,18 +86,51 @@ function SeverityDot({ severity }: { severity: string }) {
 function CategoryIcon({ category }: { category?: string }) {
   switch (category) {
     case "security":
+      return <Shield className="h-4 w-4 text-red-400" />;
     case "trust":
-      return <Shield className="h-4 w-4" />;
+      return <Shield className="h-4 w-4 text-amber-400" />;
     case "performance":
-      return <Zap className="h-4 w-4" />;
+      return <Zap className="h-4 w-4 text-yellow-400" />;
+    case "copy":
+      return <MessageSquare className="h-4 w-4 text-blue-400" />;
+    case "cta":
+      return <MousePointerClick className="h-4 w-4 text-cyan-400" />;
+    case "mobile":
+      return <Smartphone className="h-4 w-4 text-purple-400" />;
+    case "accessibility":
+      return <Eye className="h-4 w-4 text-indigo-400" />;
+    case "empty-state":
+    case "error-state":
+      return <AlertTriangle className="h-4 w-4 text-amber-400" />;
+    case "architecture":
+    case "backend-error":
+      return <FileCode className="h-4 w-4 text-orange-400" />;
+    case "database":
+      return <Database className="h-4 w-4 text-emerald-400" />;
     default:
-      return <Info className="h-4 w-4" />;
+      return <Info className="h-4 w-4 text-muted-foreground" />;
   }
 }
 
-function copyText(text: string, label: string) {
-  navigator.clipboard.writeText(text);
-  toast.success(`${label} copied!`);
+async function copyText(text: string, label: string) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      // Fallback for HTTP or unsupported browsers
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    toast.success(`${label} copied!`);
+  } catch {
+    toast.error("Failed to copy. Please select and copy manually.");
+  }
 }
 
 // Loading skeleton
@@ -188,9 +227,14 @@ export default function AuditPage() {
   if (status === "error") return <ErrorState error={errorMsg} />;
   if (!result) return <EmptyState />;
 
-  const highCount = result.issues.filter((i) => i.severity === "high").length;
-  const medCount = result.issues.filter((i) => i.severity === "medium").length;
-  const lowCount = result.issues.filter((i) => i.severity === "low").length;
+  // Sort issues: high → medium → low for better UX
+  const severityOrder = { high: 0, medium: 1, low: 2 };
+  const sortedIssues = [...result.issues].sort(
+    (a, b) => (severityOrder[a.severity] ?? 2) - (severityOrder[b.severity] ?? 2)
+  );
+  const highCount = sortedIssues.filter((i) => i.severity === "high").length;
+  const medCount = sortedIssues.filter((i) => i.severity === "medium").length;
+  const lowCount = sortedIssues.filter((i) => i.severity === "low").length;
 
   return (
     <main className="relative min-h-screen bg-background text-foreground">
@@ -283,7 +327,7 @@ export default function AuditPage() {
                 <SeverityDot severity="low" /> {lowCount} Low
               </span>
             )}
-            {result.issues.length === 0 && <span>No issues found 🎉</span>}
+            {sortedIssues.length === 0 && <span>No issues found 🎉</span>}
           </div>
         </section>
 
@@ -322,14 +366,14 @@ export default function AuditPage() {
         </section>
 
         {/* Issues Grid */}
-        {result.issues.length > 0 && (
+        {sortedIssues.length > 0 && (
           <section className="mt-10">
             <h2 className="flex items-center gap-2 text-lg font-semibold">
               <ShieldAlert className="h-5 w-5 text-cyan-400" />
-              Issues Found ({result.issues.length})
+              Issues Found ({sortedIssues.length})
             </h2>
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              {result.issues.map((issue, idx) => {
+              {sortedIssues.map((issue, idx) => {
                 const isExpanded = expandedIssue === idx;
                 return (
                   <div

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type ScoreGaugeProps = {
   score: number;
@@ -16,29 +16,38 @@ export function ScoreGauge({
   className = "",
 }: ScoreGaugeProps) {
   const [animatedScore, setAnimatedScore] = useState(0);
+  const rafRef = useRef<number>(0);
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   const arc = circumference * 0.75; // 270-degree arc
   const offset = arc - (arc * animatedScore) / 100;
 
   useEffect(() => {
+    const clamped = Math.max(0, Math.min(100, Math.round(score)));
     const duration = 1200;
     const startTime = performance.now();
+
     const animate = (now: number) => {
       const elapsed = now - startTime;
       const progress = Math.min(elapsed / duration, 1);
-      // Ease-out cubic
       const eased = 1 - Math.pow(1 - progress, 3);
-      setAnimatedScore(Math.round(score * eased));
-      if (progress < 1) requestAnimationFrame(animate);
+      setAnimatedScore(Math.round(clamped * eased));
+      if (progress < 1) {
+        rafRef.current = requestAnimationFrame(animate);
+      }
     };
-    requestAnimationFrame(animate);
+
+    rafRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
   }, [score]);
 
   const getColor = (s: number) => {
-    if (s >= 85) return { stroke: "url(#gaugeGradientGreen)", text: "text-emerald-400" };
-    if (s >= 55) return { stroke: "url(#gaugeGradientAmber)", text: "text-amber-400" };
-    return { stroke: "url(#gaugeGradientRed)", text: "text-red-400" };
+    if (s >= 85) return { stroke: "url(#gaugeGradientGreen)", text: "text-emerald-400", glow: "drop-shadow-[0_0_24px_rgba(16,185,129,0.2)]" };
+    if (s >= 55) return { stroke: "url(#gaugeGradientAmber)", text: "text-amber-400", glow: "drop-shadow-[0_0_24px_rgba(245,158,11,0.2)]" };
+    return { stroke: "url(#gaugeGradientRed)", text: "text-red-400", glow: "drop-shadow-[0_0_24px_rgba(239,68,68,0.2)]" };
   };
 
   const color = getColor(score);
@@ -50,7 +59,9 @@ export function ScoreGauge({
         width={size}
         height={size}
         viewBox={`0 0 ${size} ${size}`}
-        className="drop-shadow-[0_0_24px_rgba(6,182,212,0.15)]"
+        className={color.glow}
+        role="img"
+        aria-label={`Launch score: ${animatedScore} out of 100`}
       >
         <defs>
           <linearGradient id="gaugeGradientGreen" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -104,7 +115,7 @@ export function ScoreGauge({
         <span className={`text-5xl font-bold tracking-tighter ${color.text}`}>
           {animatedScore}
         </span>
-        <span className="text-sm text-muted-foreground mt-1">/ 100</span>
+        <span className="mt-1 text-sm text-muted-foreground">/ 100</span>
       </div>
     </div>
   );

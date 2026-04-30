@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
@@ -90,6 +90,16 @@ export default function Home() {
   const [screenshots, setScreenshots] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState(0);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      if (abortRef.current) abortRef.current.abort();
+    };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -105,12 +115,16 @@ export default function Home() {
     setUrl(submittedUrl);
 
     // Animate through loading steps
-    const stepInterval = setInterval(() => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    intervalRef.current = setInterval(() => {
       setLoadingStep((prev) => {
         if (prev < loadingSteps.length - 1) return prev + 1;
         return prev;
       });
     }, 4000);
+
+    // Create abort controller for fetch cancellation
+    abortRef.current = new AbortController();
 
     try {
       const formData = new FormData();
@@ -131,6 +145,7 @@ export default function Home() {
       const res = await fetch("/api/analyze", {
         method: "POST",
         body: formData,
+        signal: abortRef.current?.signal,
       });
 
       const data = await res.json().catch(() => null);
@@ -162,7 +177,10 @@ export default function Home() {
       );
       router.push("/audit");
     } finally {
-      clearInterval(stepInterval);
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
       setLoading(false);
     }
   };
