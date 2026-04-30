@@ -1,4 +1,5 @@
 import { neon } from "@neondatabase/serverless";
+import { encrypt, decrypt } from "./encryption";
 
 type SaveAuditInput = {
   url: string;
@@ -74,19 +75,17 @@ export async function saveAudit(input: SaveAuditInput) {
   return rows[0]?.id as string | null;
 }
 
-export async function ensureUserKeysTable() {
+export async function ensureUserSettingsTable() {
   const db = getSql();
   if (!db) return db;
 
   await db`
-    CREATE TABLE IF NOT EXISTS user_api_keys (
+    CREATE TABLE IF NOT EXISTS user_settings (
       user_id text PRIMARY KEY,
-      google_key text,
-      groq_key text,
-      openai_key text,
-      anthropic_key text,
-      model_preference text DEFAULT 'auto',
-      created_at timestamptz NOT NULL DEFAULT now(),
+      vision_provider text DEFAULT 'default',
+      vision_api_key_encrypted text,
+      code_provider text DEFAULT 'default',
+      code_api_key_encrypted text,
       updated_at timestamptz NOT NULL DEFAULT now()
     )
   `;
@@ -94,60 +93,66 @@ export async function ensureUserKeysTable() {
   return db;
 }
 
-export async function getUserApiKeys(userId: string) {
-  const db = await ensureUserKeysTable();
+export async function getUserSettings(userId: string) {
+  const db = await ensureUserSettingsTable();
   if (!db) return null;
 
   const rows = (await db`
-    SELECT * FROM user_api_keys WHERE user_id = ${userId}
+    SELECT * FROM user_settings WHERE user_id = ${userId}
   `) as Array<{
     user_id: string;
-    google_key: string | null;
-    groq_key: string | null;
-    openai_key: string | null;
-    anthropic_key: string | null;
-    model_preference: string;
+    vision_provider: string;
+    vision_api_key_encrypted: string | null;
+    code_provider: string;
+    code_api_key_encrypted: string | null;
   }>;
 
   if (!rows[0]) return null;
   const row = rows[0];
+  
   return {
     userId: row.user_id,
-    googleKey: row.google_key,
-    groqKey: row.groq_key,
-    openaiKey: row.openai_key,
-    anthropicKey: row.anthropic_key,
-    modelPreference: row.model_preference,
+    visionProvider: row.vision_provider,
+    visionKey: row.vision_api_key_encrypted ? decrypt(row.vision_api_key_encrypted) : null,
+    codeProvider: row.code_provider,
+    codeKey: row.code_api_key_encrypted ? decrypt(row.code_api_key_encrypted) : null,
   };
 }
 
-export async function upsertUserApiKeys(userId: string, data: {
-  googleKey?: string;
-  groqKey?: string;
-  openaiKey?: string;
-  anthropicKey?: string;
-  modelPreference?: string;
+export async function saveUserSettings(userId: string, data: {
+  visionProvider?: string;
+  visionKey?: string | null;
+  codeProvider?: string;
+  codeKey?: string | null;
 }) {
-  const db = await ensureUserKeysTable();
+  const db = await ensureUserSettingsTable();
   if (!db) return null;
 
+  const visionKeyEncrypted = data.visionKey ? encrypt(data.visionKey) : null;
+  const codeKeyEncrypted = data.codeKey ? encrypt(data.codeKey) : null;
+
   await db`
-    INSERT INTO user_api_keys (user_id, google_key, groq_key, openai_key, anthropic_key, model_preference, updated_at)
+    INSERT INTO user_settings (
+      user_id, 
+      vision_provider, 
+      vision_api_key_encrypted, 
+      code_provider, 
+      code_api_key_encrypted, 
+      updated_at
+    )
     VALUES (
       ${userId},
-      ${data.googleKey ?? null},
-      ${data.groqKey ?? null},
-      ${data.openaiKey ?? null},
-      ${data.anthropicKey ?? null},
-      ${data.modelPreference ?? 'auto'},
+      ${data.visionProvider ?? 'default'},
+      ${visionKeyEncrypted},
+      ${data.codeProvider ?? 'default'},
+      ${codeKeyEncrypted},
       now()
     )
     ON CONFLICT (user_id) DO UPDATE SET
-      google_key = COALESCE(EXCLUDED.google_key, user_api_keys.google_key),
-      groq_key = COALESCE(EXCLUDED.groq_key, user_api_keys.groq_key),
-      openai_key = COALESCE(EXCLUDED.openai_key, user_api_keys.openai_key),
-      anthropic_key = COALESCE(EXCLUDED.anthropic_key, user_api_keys.anthropic_key),
-      model_preference = COALESCE(EXCLUDED.model_preference, user_api_keys.model_preference),
+      vision_provider = COALESCE(EXCLUDED.vision_provider, user_settings.vision_provider),
+      vision_api_key_encrypted = COALESCE(EXCLUDED.vision_api_key_encrypted, user_settings.vision_api_key_encrypted),
+      code_provider = COALESCE(EXCLUDED.code_provider, user_settings.code_provider),
+      code_api_key_encrypted = COALESCE(EXCLUDED.code_api_key_encrypted, user_settings.code_api_key_encrypted),
       updated_at = now()
   `;
 

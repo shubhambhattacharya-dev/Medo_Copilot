@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { SignInButton, UserButton, useUser, Show } from "@clerk/nextjs";
 import {
   Card,
   CardDescription,
@@ -100,11 +101,34 @@ export default function Home() {
   const [screenshots, setScreenshots] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState(0);
+  const { isSignedIn } = useUser();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [userProvider, setUserProvider] = useState("default");
-  const [userApiKey, setUserApiKey] = useState("");
+  const [visionProvider, setVisionProvider] = useState("default");
+  const [visionKey, setVisionKey] = useState("");
+  const [codeProvider, setCodeProvider] = useState("default");
+  const [codeKey, setCodeKey] = useState("");
+  const [keysSaved, setKeysSaved] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  // Fetch user settings on mount if signed in
+  useEffect(() => {
+    if (!isSignedIn) return;
+    
+    fetch("/api/user/settings")
+      .then(res => res.json())
+      .then(data => {
+        if (!data.error) {
+          if (data.visionProvider) setVisionProvider(data.visionProvider);
+          if (data.codeProvider) setCodeProvider(data.codeProvider);
+          // Don't set keys since backend only sends booleans (hasVisionKey),
+          // but we know they exist.
+          setKeysSaved(data.hasVisionKey || data.hasCodeKey);
+        }
+      })
+      .catch(console.error);
+  }, [isSignedIn]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -113,6 +137,35 @@ export default function Home() {
       if (abortRef.current) abortRef.current.abort();
     };
   }, []);
+
+  const handleSaveSettings = async () => {
+    setIsSaving(true);
+    try {
+      const res = await fetch("/api/user/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          visionProvider,
+          visionKey,
+          codeProvider,
+          codeKey
+        })
+      });
+      if (res.ok) {
+        toast.success("API keys saved securely!");
+        setKeysSaved(true);
+        // Clear input fields since they are saved safely in DB
+        setVisionKey("");
+        setCodeKey("");
+      } else {
+        toast.error("Failed to save settings");
+      }
+    } catch (err) {
+      toast.error("Error saving settings");
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -145,11 +198,13 @@ export default function Home() {
       if (githubUrl.trim()) {
         formData.append("githubUrl", githubUrl.trim());
       }
-      // BYOK: send user's API key and provider preference
-      if (userProvider !== "default" && userApiKey.trim()) {
-        formData.append("userProvider", userProvider);
-        formData.append("userApiKey", userApiKey.trim());
-      }
+      // BYOK: send provider preferences (the backend will fetch keys from DB)
+      formData.append("visionProvider", visionProvider);
+      formData.append("codeProvider", codeProvider);
+      
+      // Also send any un-saved keys in case they didn't click save
+      if (visionKey.trim()) formData.append("visionKey", visionKey.trim());
+      if (codeKey.trim()) formData.append("codeKey", codeKey.trim());
 
       for (let i = 0; i < screenshots.length; i++) {
         const reader = new FileReader();
@@ -226,20 +281,28 @@ export default function Home() {
               </p>
             </div>
           </div>
-
           <div className="flex items-center gap-3">
             <div className="hidden items-center gap-2 rounded-full border border-border/70 bg-muted/50 px-3 py-1 text-xs text-muted-foreground md:flex">
               <BadgeCheck className="h-3.5 w-3.5 text-emerald-500" />
               Trusted by builders shipping faster
             </div>
-            <button
-              onClick={() => router.push("/settings")}
-              className="flex items-center gap-2 rounded-full border border-border/70 bg-muted/50 px-3 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <Settings className="h-3.5 w-3.5" />
-              <span className="hidden md:inline">Settings</span>
-            </button>
+            
             <ThemeToggle />
+            
+            <Show when="signed-out">
+              <div className="rounded-full border border-border/70 bg-muted/50 px-3 py-1 text-xs text-muted-foreground hover:bg-muted/80 transition-colors">
+                <SignInButton mode="modal" />
+              </div>
+            </Show>
+            <Show when="signed-in">
+              <UserButton 
+                appearance={{
+                  elements: {
+                    userButtonAvatarBox: "h-8 w-8"
+                  }
+                }}
+              />
+            </Show>
           </div>
         </header>
 
@@ -337,43 +400,108 @@ export default function Home() {
                   </button>
                   
                   {settingsOpen && (
-                    <div className="mt-2 space-y-4 rounded-xl border border-border/50 bg-background/50 p-4 backdrop-blur">
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-semibold text-foreground/80">AI Provider</label>
-                        <select
-                          value={userProvider}
-                          onChange={(e) => setUserProvider(e.target.value)}
-                          className="w-full rounded-lg border border-border/50 bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
-                        >
-                          {AI_PROVIDERS.map((p) => (
-                            <option key={p.value} value={p.value}>
-                              {p.label}
-                            </option>
-                          ))}
-                        </select>
-                        <p className="text-[10px] text-muted-foreground">
-                          {AI_PROVIDERS.find(p => p.value === userProvider)?.hint}
-                        </p>
-                      </div>
-
-                      {userProvider !== "default" && (
-                        <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1">
-                          <label className="flex items-center gap-1.5 text-xs font-semibold text-foreground/80">
-                            <Key className="h-3 w-3" />
-                            API Key
-                          </label>
-                          <Input
-                            type="password"
-                            placeholder={`Enter your ${AI_PROVIDERS.find(p => p.value === userProvider)?.label} API key`}
-                            value={userApiKey}
-                            onChange={(e) => setUserApiKey(e.target.value)}
-                            className="h-10 text-sm"
-                          />
-                          <p className="text-[10px] text-amber-500/80">
-                            Keys are sent directly to the API and never stored on our servers.
-                          </p>
+                    <div className="mt-2 space-y-5 rounded-xl border border-border/50 bg-background/50 p-4 backdrop-blur">
+                      
+                      {!isSignedIn && (
+                        <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-500">
+                          <strong>Note:</strong> You are not signed in. Any keys you enter will be used for this analysis only and won&apos;t be saved.
                         </div>
                       )}
+
+                      {/* Vision Provider (Frontend) */}
+                      <div className="space-y-3">
+                        <h4 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                          <LayoutPanelLeft className="h-4 w-4 text-cyan-500" />
+                          Frontend Vision Model
+                        </h4>
+                        <div className="space-y-1.5 pl-5 border-l-2 border-border/50">
+                          <select
+                            value={visionProvider}
+                            onChange={(e) => setVisionProvider(e.target.value)}
+                            className="w-full rounded-lg border border-border/50 bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                          >
+                            {AI_PROVIDERS.map((p) => (
+                              <option key={p.value} value={p.value}>{p.label}</option>
+                            ))}
+                          </select>
+                          <p className="text-[10px] text-muted-foreground">
+                            {AI_PROVIDERS.find(p => p.value === visionProvider)?.hint}
+                          </p>
+
+                          {visionProvider !== "default" && (
+                            <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1 pt-2">
+                              <label className="flex items-center gap-1.5 text-xs font-semibold text-foreground/80">
+                                <Key className="h-3 w-3" />
+                                Vision API Key
+                              </label>
+                              <Input
+                                type="password"
+                                placeholder={keysSaved && !visionKey ? "Key saved in database (leave blank to keep)" : "Enter API key"}
+                                value={visionKey}
+                                onChange={(e) => setVisionKey(e.target.value)}
+                                className="h-9 text-sm"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <hr className="border-border/50" />
+
+                      {/* Code Provider (Backend) */}
+                      <div className="space-y-3">
+                        <h4 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                          <Settings className="h-4 w-4 text-emerald-500" />
+                          Backend Code Model
+                        </h4>
+                        <div className="space-y-1.5 pl-5 border-l-2 border-border/50">
+                          <select
+                            value={codeProvider}
+                            onChange={(e) => setCodeProvider(e.target.value)}
+                            className="w-full rounded-lg border border-border/50 bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                          >
+                            {AI_PROVIDERS.map((p) => (
+                              <option key={p.value} value={p.value}>{p.label}</option>
+                            ))}
+                          </select>
+                          <p className="text-[10px] text-muted-foreground">
+                            {AI_PROVIDERS.find(p => p.value === codeProvider)?.hint}
+                          </p>
+
+                          {codeProvider !== "default" && (
+                            <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1 pt-2">
+                              <label className="flex items-center gap-1.5 text-xs font-semibold text-foreground/80">
+                                <Key className="h-3 w-3" />
+                                Code API Key
+                              </label>
+                              <Input
+                                type="password"
+                                placeholder={keysSaved && !codeKey ? "Key saved in database (leave blank to keep)" : "Enter API key"}
+                                value={codeKey}
+                                onChange={(e) => setCodeKey(e.target.value)}
+                                className="h-9 text-sm"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {isSignedIn && (visionKey || codeKey || visionProvider !== "default" || codeProvider !== "default") && (
+                        <div className="pt-2">
+                          <Button 
+                            type="button" 
+                            variant="secondary" 
+                            size="sm" 
+                            className="w-full"
+                            onClick={handleSaveSettings}
+                            disabled={isSaving || (!visionKey && !codeKey && !keysSaved)}
+                          >
+                            {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4 text-emerald-500" />}
+                            {keysSaved && !visionKey && !codeKey ? "Settings Saved Securely" : "Save Settings to Profile"}
+                          </Button>
+                        </div>
+                      )}
+
                     </div>
                   )}
                 </div>

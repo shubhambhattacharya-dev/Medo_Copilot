@@ -6,8 +6,9 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import * as cheerio from "cheerio";
 import { chromium } from "playwright";
-import { saveAudit, getUserApiKeys } from "@/lib/audits";
+import { saveAudit, getUserSettings } from "@/lib/audits";
 import { fetchGithubRepoCode } from "@/lib/github";
+import { auth } from "@clerk/nextjs/server";
 
 const IssueCategorySchema = z.enum([
   "copy",
@@ -623,24 +624,40 @@ export async function POST(req: NextRequest) {
     const url = formData.get("url") as string | null;
     const userScreenshot = formData.get("screenshot") as string | null;
     const githubUrl = formData.get("githubUrl") as string | null;
-    const userProvider = formData.get("userProvider") as string | null;
-    const userApiKey = formData.get("userApiKey") as string | null;
+    
+    // Extract BYOK settings from form
+    const formVisionProvider = formData.get("visionProvider") as string | null;
+    const formVisionKey = formData.get("visionKey") as string | null;
+    const formCodeProvider = formData.get("codeProvider") as string | null;
+    const formCodeKey = formData.get("codeKey") as string | null;
 
     if (!url || typeof url !== "string") {
       return NextResponse.json({ error: "URL is required" }, { status: 400 });
     }
 
-    // Fetch user API keys from database (if set)
-    let userKeys = null;
+    // Fetch user API keys from database (if authenticated)
+    let userSettings = null;
     try {
-      userKeys = await getUserApiKeys("default-user");
+      const { userId } = await auth();
+      if (userId) {
+        userSettings = await getUserSettings(userId);
+      }
     } catch (e) {
       console.warn("Could not fetch user API keys:", e);
     }
 
-    // Use user keys from form > database > system
-    const effectiveUserProvider = userProvider || userKeys?.modelPreference || null;
-    const effectiveUserApiKey = userApiKey || userKeys?.googleKey || userKeys?.groqKey || userKeys?.openaiKey || userKeys?.anthropicKey || null;
+    // Determine effective models to use (form input > db > default server keys)
+    const effectiveVisionProvider = formVisionProvider && formVisionProvider !== "default" 
+      ? formVisionProvider 
+      : (userSettings?.visionProvider && userSettings.visionProvider !== "default" ? userSettings.visionProvider : null);
+    
+    const effectiveVisionKey = formVisionKey || userSettings?.visionKey || null;
+
+    const effectiveCodeProvider = formCodeProvider && formCodeProvider !== "default"
+      ? formCodeProvider
+      : (userSettings?.codeProvider && userSettings.codeProvider !== "default" ? userSettings.codeProvider : null);
+      
+    const effectiveCodeKey = formCodeKey || userSettings?.codeKey || null;
 
     let validUrl = url.trim();
     if (!validUrl.startsWith("http://") && !validUrl.startsWith("https://")) {
@@ -807,151 +824,41 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(await attachSavedAuditId(validUrl, fallbackResult));
     }
 
-    const getPrompt = (supportsVision: boolean) => `
-You are a panel of three senior experts conducting a launch-readiness audit:
+    const getFrontendPrompt = (supportsVision: boolean) => `
+You are a panel of two senior experts conducting a launch-readiness audit:
 1. A **Senior UX/UI Designer** (10+ years, conversion optimization specialist)
-2. A **Senior Software Engineer** (10+ years, full-stack architecture, security, error handling)
-3. A **Senior QA Engineer** (testing, edge cases, robustness, accessibility)
+2. A **Senior QA Engineer** (testing, edge cases, robustness, accessibility)
 
-You are auditing a web application before launch. Your job is to find REAL, ACTIONABLE issues — not vague suggestions. Be specific with evidence.
+You are auditing the FRONTEND of a web application before launch. Your job is to find REAL, ACTIONABLE issues.
 
 ═══════════════════════════════════════
 PART A — FRONTEND AUDIT (UX / UI / Copy)
 ═══════════════════════════════════════
-
-Systematically check EVERY principle below. For each, state whether you found an issue or not.
-
 ### A1. HERO & VALUE PROPOSITION
 - Can a visitor understand WHO this is for, WHAT it does, and WHAT RESULT they get — within 3 seconds?
-- Is the headline specific with concrete outcomes, or vague with buzzwords like "innovative" and "powerful"?
-- Is there a subheadline that reinforces the headline with a different angle?
-
 ### A2. COPY & MESSAGING QUALITY
 - Does the copy use specific numbers/data/proof or generic marketing language?
-- Is there spelling, grammar, or awkward phrasing?
-- Is the tone consistent throughout the page?
-- Are paragraphs short and scannable, or wall-of-text?
-
 ### A3. TRUST & CREDIBILITY SIGNALS
 - Are there testimonials, reviews, case studies, or user stories?
-- Are there logos, badges, certifications, or "as seen in" sections?
-- Is there social proof (user count, downloads, GitHub stars, ratings)?
-- Is the creator/team visible with names, photos, or LinkedIn links?
-- Is there a clear "why trust us" or credibility section near the CTA?
-
 ### A4. CALL-TO-ACTION (CTA) DESIGN
 - Is there ONE clear primary CTA above the fold?
-- Does the CTA use strong action verbs (Get, Start, Try, Book, Join)?
-- Is the CTA visually prominent (contrast, size, whitespace)?
-- Are secondary CTAs visually subordinate to the primary?
-- Does the CTA tell the user what happens next?
-
 ### A5. VISUAL HIERARCHY & LAYOUT
 - Is the most important content (hero, CTA) at the top?
-- Is there clear visual separation between sections?
-- Are there enough whitespace and breathing room?
-- Does the layout guide the eye: headline → subtext → CTA → proof?
-- Is the color palette consistent and professional?
-
 ### A6. MOBILE EXPERIENCE
 - Is content easy to read on small screens (no horizontal scroll)?
-- Are tap targets at least 44x44px?
-- Does the CTA remain visible without excessive scrolling?
-- Is the navigation mobile-friendly (hamburger menu or simple)?
-- Are images and text properly sized for mobile?
-
 ### A7. MISSING SECTIONS
 - Is there a clear How-It-Works / Features section?
-- Is there an FAQ or objection-handling section?
-- Is there a pricing or "what you get" section?
-- Is there a footer with contact/social links?
-
 ### A8. EMPTY, LOADING & ERROR STATES
 - Does the app handle loading states with skeleton/spinner?
-- Is there a clear empty state when no data exists?
-- Is there a user-friendly error state with retry option?
-- Are form validation errors shown inline?
-
 ### A9. ACCESSIBILITY
 - Are images missing alt text?
-- Is color contrast sufficient (WCAG AA)?
-- Are interactive elements keyboard-accessible?
-- Are links/buttons clearly labeled (not just "click here")?
-
 ### A10. PAGE PERFORMANCE SIGNALS
 - Is the page content-rich (not thin/sparse)?
-- Are there too many competing links (>15)?
-- Is there meaningful content vs. filler/placeholder text?
-- Is there a proper page title and meta description?
-
-═══════════════════════════════════════
-PART B — BACKEND AUDIT (Code / Architecture)
-═══════════════════════════════════════
-${githubCodeText ? `
-You have been provided backend source code from GitHub. Analyze it thoroughly:
-
-### B1. SECURITY
-- Are there hardcoded API keys, secrets, or passwords in the code?
-- Is there proper authentication/authorization on protected routes?
-- Are environment variables used correctly?
-- Is input validation present on API endpoints?
-- Is there CORS configuration?
-
-### B2. ERROR HANDLING & RESILIENCE
-- Do API routes have proper try/catch blocks?
-- Are errors returned with appropriate HTTP status codes (not generic 500)?
-- Is there graceful degradation when external services fail?
-- Are async operations properly awaited?
-- Are there timeout handling for external API calls?
-
-### B3. DATABASE & DATA LAYER
-- Are there N+1 query patterns?
-- Is there proper connection pooling?
-- Are database queries parameterized (SQL injection prevention)?
-- Is there proper data validation before database operations?
-- Are there missing indexes on frequently queried fields?
-
-### B4. API DESIGN & ARCHITECTURE
-- Are REST conventions followed (proper HTTP methods, status codes)?
-- Is there consistent error response format?
-- Are routes properly organized and modular?
-- Is there rate limiting or abuse prevention?
-- Are responses properly typed?
-
-### B5. CODE QUALITY
-- Is there code duplication that should be refactored?
-- Are functions too long (>50 lines)?
-- Is there proper separation of concerns?
-- Are there unused imports or dead code?
-- Is naming consistent and descriptive?
-
-### B6. DEPLOYMENT READINESS
-- Are there proper environment variable checks?
-- Is there health check endpoint?
-- Are there proper logging practices?
-- Is the build configuration correct?
-
-BACKEND CODE:
-${githubCodeText}` : `
-No backend code was provided (no GitHub URL). Skip Part B entirely. Only report frontend issues.`}
-
-═══════════════════════════════════════
-SCORING RULES
-═══════════════════════════════════════
-- Start at 85 points
-- HIGH severity issue: -8 to -12 points
-- MEDIUM severity issue: -3 to -5 points
-- LOW severity issue: -1 to -2 points
-- HIGH confidence = you SAW evidence in screenshot/text/code
-- MEDIUM confidence = strongly inferred from context
-- LOW confidence = educated guess
-- Be FAIR: don't penalize for acceptable implementations
-- If no backend code provided, score purely on frontend
 
 ═══════════════════════════════════════
 OUTPUT (JSON)
 ═══════════════════════════════════════
-{"thoughtProcess": ["A1-Hero: checked headline...", "A2-Copy: evaluated tone...", "B1-Security: scanned for hardcoded keys..."], "launchScore": number, "verdict": "launch-ready|needs-fixes|broken", "summary": "2-3 sentences covering both frontend and backend assessment", "issues": [{"category": "copy|trust|cta|mobile|empty-state|error-state|accessibility|performance|security|architecture|database|backend-error", "title": "specific issue name", "severity": "high|medium|low", "description": "why this matters for launch readiness", "fixPrompt": "exact actionable instruction to fix this - be specific, not vague", "evidence": "the exact text/element/code line that proves this issue", "confidence": "high|medium|low"}], "improvementPrompt": "A complete, detailed prompt the user can paste into an AI assistant to fix ALL frontend and backend issues at once. Include specific file paths and code changes where relevant."}
+{"thoughtProcess": ["A1-Hero: checked headline..."], "launchScore": number, "verdict": "launch-ready|needs-fixes|broken", "summary": "2-3 sentences covering frontend assessment", "issues": [{"category": "copy|trust|cta|mobile|empty-state|error-state|accessibility|performance", "title": "specific issue name", "severity": "high|medium|low", "description": "why this matters", "fixPrompt": "exact actionable instruction to fix this", "evidence": "the exact text/element", "confidence": "high|medium|low"}], "improvementPrompt": "A complete, detailed prompt to fix ALL frontend issues."}
 
 ═══════════════════════════════════════
 TARGET PAGE DATA
@@ -961,16 +868,42 @@ Title: ${pageTitle}
 Content: ${pageText.substring(0, 4000)}
 
 ${supportsVision 
-  ? `You have SCREENSHOTS attached. Use them to evaluate: visual hierarchy, CTA prominence, color scheme, mobile readability, layout quality, and empty states. Reference specific visual elements in your evidence.`
-  : `TEXT-ONLY mode. You cannot see the page visually. Focus on: copy quality, CTA phrasing, trust signal keywords, content depth, meta tags. Do NOT make claims about visual elements you cannot verify.`
+  ? `You have SCREENSHOTS attached. Use them to evaluate: visual hierarchy, CTA prominence, color scheme, mobile readability, layout quality, and empty states.`
+  : `TEXT-ONLY mode. Focus on: copy quality, CTA phrasing, trust signal keywords.`
 }
-
 Measured signals:
 - Meta description: ${pageSignals.metaDescription || "MISSING"}
 - CTA/link labels found: ${pageSignals.ctas.join(", ") || "NONE DETECTED"}
 - Total links: ${pageSignals.links.length}
-- Image alt coverage: ${pageSignals.imageCount - pageSignals.imagesMissingAlt}/${pageSignals.imageCount} images have alt text
-- Extracted text length: ${pageSignals.contentLength} characters
+`;
+
+    const getBackendPrompt = () => `
+You are a **Senior Software Engineer** (10+ years, full-stack architecture, security, error handling).
+You are auditing the BACKEND of a web application before launch.
+
+═══════════════════════════════════════
+PART B — BACKEND AUDIT (Code / Architecture)
+═══════════════════════════════════════
+### B1. SECURITY
+- Are there hardcoded API keys, secrets, or passwords?
+### B2. ERROR HANDLING & RESILIENCE
+- Do API routes have proper try/catch blocks?
+### B3. DATABASE & DATA LAYER
+- Are database queries parameterized?
+### B4. API DESIGN & ARCHITECTURE
+- Are REST conventions followed?
+### B5. CODE QUALITY
+- Is there code duplication?
+### B6. DEPLOYMENT READINESS
+- Are there proper environment variable checks?
+
+BACKEND CODE:
+${githubCodeText}
+
+═══════════════════════════════════════
+OUTPUT (JSON)
+═══════════════════════════════════════
+{"thoughtProcess": ["B1-Security: scanned for keys..."], "launchScore": number, "verdict": "launch-ready|needs-fixes|broken", "summary": "2-3 sentences covering backend assessment", "issues": [{"category": "security|architecture|database|backend-error", "title": "specific issue name", "severity": "high|medium|low", "description": "why this matters", "fixPrompt": "exact actionable instruction to fix this", "evidence": "the exact code line", "confidence": "high|medium|low"}], "improvementPrompt": "A complete, detailed prompt to fix ALL backend issues."}
 `;
 
      const aiModels: AiProvider[] = [];
@@ -1022,129 +955,126 @@ Measured signals:
         );
       }
 
-      // 4. USER BYOK (Bring Your Own Key) - Put at the very front to prioritize
-      const actualProvider = effectiveUserProvider;
-      const actualApiKey = effectiveUserApiKey;
+     const getProviderModel = (providerName: string, apiKey: string | null) => {
+       try {
+         if (providerName === "gemini" && (apiKey || process.env.GOOGLE_GENERATIVE_AI_API_KEY)) {
+           const key = apiKey || process.env.GOOGLE_GENERATIVE_AI_API_KEY!;
+           const customGoogle = createGoogleGenerativeAI({ apiKey: key });
+           return createAIProvider("gemini", customGoogle(process.env.GOOGLE_GENERATIVE_AI_MODEL || "gemini-2.0-flash"), true, true);
+         } else if (providerName === "groq" && (apiKey || process.env.GROQ_API_KEY)) {
+           const key = apiKey || process.env.GROQ_API_KEY!;
+           const customGroq = createGroq({ apiKey: key });
+           return createAIProvider("groq", customGroq(process.env.GROQ_MODEL || "llama-3.2-90b-vision-preview"), false, true);
+         } else if (providerName === "openrouter" && apiKey) {
+           const customOpenRouter = createOpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey });
+           return createAIProvider("openrouter", customOpenRouter("anthropic/claude-3.5-sonnet"), false, true);
+         }
+       } catch (err) {
+         console.warn(`Failed to initialize provider ${providerName}:`, err);
+       }
+       return null;
+     };
 
-      if (actualProvider && actualApiKey) {
-        let byokModel: LanguageModel | null = null;
-        let supportsStructured = false;
+     // Resolve vision model
+     const visionModel = effectiveVisionProvider 
+       ? getProviderModel(effectiveVisionProvider, effectiveVisionKey) 
+       : getProviderModel("gemini", null) || getProviderModel("groq", null);
+       
+     // Resolve code model
+     const codeModel = effectiveCodeProvider 
+       ? getProviderModel(effectiveCodeProvider, effectiveCodeKey) 
+       : getProviderModel("groq", null) || getProviderModel("gemini", null);
 
-        try {
-          if (actualProvider === "gemini") {
-            const customGoogle = createGoogleGenerativeAI({ apiKey: actualApiKey });
-            byokModel = customGoogle(process.env.GOOGLE_GENERATIVE_AI_MODEL || "gemini-2.0-flash");
-            supportsStructured = true;
-          } else if (actualProvider === "groq") {
-            const customGroq = createGroq({ apiKey: actualApiKey });
-            byokModel = customGroq(process.env.GROQ_MODEL || "llama-3.2-90b-vision-preview");
-          } else if (actualProvider === "openai") {
-            const customOpenAI = createOpenAI({ apiKey: actualApiKey });
-            byokModel = customOpenAI("gpt-4o");
-            supportsStructured = true;
-          } else if (actualProvider === "anthropic") {
-            const customAnthropic = createOpenAI({
-              baseURL: "https://api.anthropic.com/v1",
-              apiKey: actualApiKey,
-            });
-            byokModel = customAnthropic("claude-3-5-sonnet-20241022");
-            supportsStructured = true;
-          }
-
-          if (byokModel) {
-            aiModels.unshift(
-              createAIProvider(`byok-${actualProvider}`, byokModel, supportsStructured, true)
-            );
-          }
-        } catch (err) {
-          console.warn("Failed to initialize BYOK provider:", err);
-        }
-      }
-
-      if (!aiModels.length) {
-        console.error("No AI models configured! Check your .env.local keys.");
-        return NextResponse.json(await attachSavedAuditId(validUrl, measuredResult));
-      }
-
-    console.log(`Using AI models: ${aiModels.map(m => m.name).join(", ")}`);
-
-    for (const ai of aiModels) {
-      try {
-        console.log(`Attempting analysis with ${ai.name}...`);
-        
-        const currentPrompt = getPrompt(ai.supportsVision !== false && screenshots.length > 0);
-        const imageContents = screenshots.map(s => ({ type: "image" as const, image: Buffer.from(s, "base64"), mediaType: "image/png" }));
-        
-        const object = ai.structuredOutput
-          ? (
-              await generateObject({
-                model: ai.model,
-                schema: ResultSchema,
-                messages: [
-                  {
-                    role: "user",
-                    content: (ai.supportsVision !== false && screenshots.length > 0)
-                      ? [
-                          { type: "text", text: currentPrompt },
-                          ...imageContents
-                        ]
-                      : currentPrompt
-                  }
-                ]
-              })
-            ).object
-          : parseJsonFromText(
-              (
-                await generateText({
-                  model: ai.model,
-                  messages: [
-                    {
-                      role: "user",
-                      content: (ai.supportsVision !== false && screenshots.length > 0)
-                        ? [
-                            { type: "text", text: currentPrompt + "\n\nReturn only valid JSON with this exact shape: {\"thoughtProcess\": [\"I am checking the copy...\"], \"launchScore\": number, \"verdict\": \"launch-ready\" | \"needs-fixes\" | \"broken\", \"summary\": string, \"issues\": [{\"category\": \"copy\" | \"trust\" | \"mobile\" | \"cta\" | \"empty-state\" | \"error-state\" | \"accessibility\" | \"performance\" | \"security\" | \"architecture\" | \"database\" | \"backend-error\", \"title\": string, \"severity\": \"high\" | \"medium\" | \"low\", \"description\": string, \"fixPrompt\": string, \"evidence\": string, \"confidence\": \"high\" | \"medium\" | \"low\"}], \"improvementPrompt\": string}." },
-                            ...imageContents
-                          ]
-                        : currentPrompt + "\n\nReturn only valid JSON with this exact shape: {\"thoughtProcess\": [\"I am checking the copy...\"], \"launchScore\": number, \"verdict\": \"launch-ready\" | \"needs-fixes\" | \"broken\", \"summary\": string, \"issues\": [{\"category\": \"copy\" | \"trust\" | \"mobile\" | \"cta\" | \"empty-state\" | \"error-state\" | \"accessibility\" | \"performance\" | \"security\" | \"architecture\" | \"database\" | \"backend-error\", \"title\": string, \"severity\": \"high\" | \"medium\" | \"low\", \"description\": string, \"fixPrompt\": string, \"evidence\": string, \"confidence\": \"high\" | \"medium\" | \"low\"}], \"improvementPrompt\": string}."
-                    }
-                  ]
-                })
-              ).text
-            );
-
-        const mergedIssues = mergeIssues(object.issues, ruleIssues);
-        const measuredScore = clampScore(
-          Math.min(
-            object.launchScore,
-            90 - mergedIssues.reduce((total, issue) => total + scorePenalty(issue), 0)
-          )
-        );
-        const auditResult = {
-          ...object,
-          issues: mergedIssues,
-          launchScore: measuredScore,
-          verdict: getVerdict(measuredScore, mergedIssues),
-          improvementPrompt: buildImprovementPrompt({
-            url: validUrl,
-            title: pageTitle,
-            issues: mergedIssues,
-          }),
-          analysisMode: "ai",
-          provider: ai.name,
-        };
-
-        return NextResponse.json(await attachSavedAuditId(validUrl, auditResult));
-      } catch (llmError: unknown) {
-        console.error(`[Analysis Error] Provider: ${ai.name}`, llmError);
-        console.warn(`${ai.name} analysis failed: ${getErrorMessage(llmError)}`);
-      }
+    if (!visionModel) {
+      console.error("No AI models configured! Check your keys.");
+      return NextResponse.json(await attachSavedAuditId(validUrl, measuredResult));
     }
 
-    const allErrors = aiModels.map(ai => `${ai.name} failed`).join(", ");
-    return NextResponse.json(
-      { error: `AI analysis failed: ${allErrors}. Please check API keys and quota.` },
-      { status: 503 }
-    );
+    console.log(`Using Vision Model: ${visionModel.name}`);
+    if (githubCodeText) console.log(`Using Code Model: ${codeModel?.name}`);
+
+    try {
+      const executeAiTask = async (ai: AiProvider, promptText: string, includeVision: boolean) => {
+        const imageContents = includeVision && screenshots.length > 0 
+          ? screenshots.map(s => ({ type: "image" as const, image: Buffer.from(s, "base64"), mediaType: "image/png" as const })) 
+          : [];
+
+        const promptWithFormat = promptText + "\n\nReturn only valid JSON with this exact shape: {\"thoughtProcess\": [\"...\"], \"launchScore\": 90, \"verdict\": \"launch-ready\", \"summary\": \"...\", \"issues\": [...], \"improvementPrompt\": \"...\"}.";
+
+        if (ai.structuredOutput) {
+          const { object } = await generateObject({
+            model: ai.model,
+            schema: ResultSchema,
+            messages: [{
+              role: "user",
+              content: includeVision && imageContents.length > 0 
+                ? [{ type: "text", text: promptText }, ...imageContents] 
+                : promptText
+            }]
+          });
+          return object;
+        } else {
+          const { text } = await generateText({
+            model: ai.model,
+            messages: [{
+              role: "user",
+              content: includeVision && imageContents.length > 0
+                ? [{ type: "text", text: promptWithFormat }, ...imageContents]
+                : promptWithFormat
+            }]
+          });
+          return parseJsonFromText(text);
+        }
+      };
+
+      // Run Vision Task
+      const visionTask = executeAiTask(visionModel, getFrontendPrompt(visionModel.supportsVision !== false), true);
+
+      // Run Code Task (only if we have github code and a code model)
+      const codeTask = (githubCodeText && codeModel)
+        ? executeAiTask(codeModel, getBackendPrompt(), false)
+        : Promise.resolve(null);
+
+      // Wait for both to complete
+      const [visionResult, codeResult] = await Promise.all([visionTask, codeTask]);
+
+      // Merge Issues
+      let allIssues = mergeIssues(visionResult.issues, ruleIssues);
+      if (codeResult && codeResult.issues) {
+        allIssues = mergeIssues(allIssues, codeResult.issues);
+      }
+
+      // Calculate final score using logic from both
+      const totalPenalty = allIssues.reduce((total, issue) => total + scorePenalty(issue), 0);
+      const minScore = Math.min(visionResult.launchScore, codeResult?.launchScore || 100);
+      const finalMeasuredScore = clampScore(Math.min(minScore, 90 - totalPenalty));
+
+      const combinedImprovementPrompt = codeResult
+        ? `Frontend Improvements:\n${visionResult.improvementPrompt}\n\nBackend Improvements:\n${codeResult.improvementPrompt}`
+        : visionResult.improvementPrompt;
+
+      const auditResult = {
+        thoughtProcess: [...(visionResult.thoughtProcess || []), ...(codeResult?.thoughtProcess || [])],
+        summary: codeResult 
+          ? `${visionResult.summary} ${codeResult.summary}` 
+          : visionResult.summary,
+        issues: allIssues,
+        launchScore: finalMeasuredScore,
+        verdict: getVerdict(finalMeasuredScore, allIssues),
+        improvementPrompt: combinedImprovementPrompt,
+        analysisMode: "ai-split",
+        provider: codeResult ? `${visionModel.name} (Vision) + ${codeModel!.name} (Code)` : visionModel.name,
+      };
+
+      return NextResponse.json(await attachSavedAuditId(validUrl, auditResult));
+
+    } catch (llmError: unknown) {
+      console.error("[Analysis Error]", llmError);
+      return NextResponse.json(
+        { error: `AI analysis failed: ${getErrorMessage(llmError)}. Please check your API keys and quota.` },
+        { status: 503 }
+      );
+    }
   } catch (error) {
     console.error("Audit API Error:", error);
     const errorMessage =
