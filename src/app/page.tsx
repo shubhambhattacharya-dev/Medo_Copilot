@@ -79,39 +79,80 @@ type AuditResult = {
   issues: AuditIssue[];
   error?: string;
   analysisMode?: string;
+  verdict?: "launch-ready" | "broken" | "needs-fixes";
+  provider?: string;
+  summary?: string;
+  improvementPrompt?: string;
+  thoughtProcess?: string[];
 };
+
+function normalizeAuditUrl(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return trimmed;
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
 
 export default function Home() {
   const [url, setUrl] = useState("");
+  const [githubUrl, setGithubUrl] = useState("");
+  const [screenshots, setScreenshots] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AuditResult | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!url) return;
-    
+    const submittedUrl = normalizeAuditUrl(url);
+
+    if (!submittedUrl) {
+      toast.error("Enter a public app URL first.");
+      return;
+    }
+
     setLoading(true);
+    setResult(null);
+    setUrl(submittedUrl);
+
     try {
+      const formData = new FormData();
+      formData.append("url", submittedUrl);
+      if (githubUrl.trim()) {
+        formData.append("githubUrl", githubUrl.trim());
+      }
+      
+      for (let i = 0; i < screenshots.length; i++) {
+        const reader = new FileReader();
+        const base64Data = await new Promise<string>((resolve) => {
+          reader.onload = () => resolve(reader.result as string);
+          reader.readAsDataURL(screenshots[i]);
+        });
+        formData.append(`screenshot_${i}`, base64Data.split(",")[1]);
+      }
+      
       const res = await fetch("/api/analyze", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: formData,
       });
-      
-      const data = await res.json();
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.error || "Audit request failed.");
+      }
+
       console.log("Analysis Result:", data);
       setResult(data);
-      
-      // Scroll to result card
+
       setTimeout(() => {
         document.getElementById("audit-card")?.scrollIntoView({ behavior: "smooth" });
       }, 100);
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("Error analyzing app:", error);
+      const errorMessage = error instanceof Error ? error.message : "Unable to reach the audit API.";
+      toast.error(errorMessage);
       setResult({
         launchScore: 0,
         issues: [],
-        error: "Unable to reach the audit API.",
+        error: errorMessage,
       });
     } finally {
       setLoading(false);
@@ -192,25 +233,37 @@ export default function Home() {
                 <LayoutPanelLeft className="h-4 w-4 text-cyan-500" />
                 Audit your MeDo URL
               </div>
-              <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-3 sm:flex-row">
+              <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-3">
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <Input
+                    type="text"
+                    inputMode="url"
+                    placeholder="https://your-app.medo.dev"
+                    required
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    className="h-12 flex-1 rounded-2xl bg-background/80 px-4 text-base"
+                  />
+                  <label className="flex h-12 cursor-pointer items-center justify-center rounded-2xl border border-border/70 bg-background/80 px-4 text-sm hover:bg-muted whitespace-nowrap">
+                    {screenshots.length > 0 ? `${screenshots.length} screenshots` : "Upload 7 screenshots"}
+                    <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => setScreenshots(Array.from(e.target.files || []).slice(0, 7))} />
+                  </label>
+                </div>
                 <Input
-                  type="url"
-                  inputMode="url"
-                  placeholder="https://your-app.medo.dev"
-                  aria-label="MeDo app URL"
-                  required
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  className="h-12 flex-1 rounded-2xl bg-background/80 px-4 text-base"
+                  type="text"
+                  placeholder="GitHub Repository URL (Optional)"
+                  value={githubUrl}
+                  onChange={(e) => setGithubUrl(e.target.value)}
+                  className="h-12 w-full rounded-2xl bg-background/80 px-4 text-base"
                 />
                 <Button
                   type="submit"
                   size="lg"
                   disabled={loading}
-                  className="h-12 rounded-2xl px-6 text-sm font-semibold shadow-lg shadow-cyan-500/15"
+                  className="h-12 w-full rounded-2xl px-6 text-sm font-semibold shadow-lg shadow-cyan-500/15 sm:w-auto"
                 >
                   {loading ? "Analyzing..." : "Analyze app"}
-                  {!loading && <ArrowRight className="h-4 w-4" />}
+                  {!loading && <ArrowRight className="h-4 w-4 ml-2" />}
                 </Button>
               </form>
 
