@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   Card,
-  CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
@@ -16,13 +16,14 @@ import {
   ArrowRight,
   BadgeCheck,
   BarChart3,
+  CheckCircle2,
   Copy,
   Gauge,
   LayoutPanelLeft,
+  Loader2,
   ShieldCheck,
   Smartphone,
   Sparkles,
-  TriangleAlert,
 } from "lucide-react";
 
 const checks = [
@@ -43,7 +44,7 @@ const checks = [
   },
 ];
 
-const fixes = [
+const previewFixes = [
   "Add a stronger hero promise above the fold.",
   "Move the primary CTA higher and reduce competing actions.",
   "Show one concrete outcome instead of generic marketing copy.",
@@ -67,24 +68,14 @@ const steps = [
   },
 ];
 
-type AuditIssue = {
-  title: string;
-  severity: "high" | "medium" | "low";
-  description: string;
-  fixPrompt: string;
-};
-
-type AuditResult = {
-  launchScore: number;
-  issues: AuditIssue[];
-  error?: string;
-  analysisMode?: string;
-  verdict?: "launch-ready" | "broken" | "needs-fixes";
-  provider?: string;
-  summary?: string;
-  improvementPrompt?: string;
-  thoughtProcess?: string[];
-};
+const loadingSteps = [
+  "Fetching page content...",
+  "Capturing screenshots...",
+  "Running AI analysis...",
+  "Checking trust signals...",
+  "Evaluating mobile layout...",
+  "Generating fix prompts...",
+];
 
 function normalizeAuditUrl(value: string) {
   const trimmed = value.trim();
@@ -92,13 +83,13 @@ function normalizeAuditUrl(value: string) {
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
-
 export default function Home() {
+  const router = useRouter();
   const [url, setUrl] = useState("");
   const [githubUrl, setGithubUrl] = useState("");
   const [screenshots, setScreenshots] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<AuditResult | null>(null);
+  const [loadingStep, setLoadingStep] = useState(0);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,8 +101,16 @@ export default function Home() {
     }
 
     setLoading(true);
-    setResult(null);
+    setLoadingStep(0);
     setUrl(submittedUrl);
+
+    // Animate through loading steps
+    const stepInterval = setInterval(() => {
+      setLoadingStep((prev) => {
+        if (prev < loadingSteps.length - 1) return prev + 1;
+        return prev;
+      });
+    }, 4000);
 
     try {
       const formData = new FormData();
@@ -119,7 +118,7 @@ export default function Home() {
       if (githubUrl.trim()) {
         formData.append("githubUrl", githubUrl.trim());
       }
-      
+
       for (let i = 0; i < screenshots.length; i++) {
         const reader = new FileReader();
         const base64Data = await new Promise<string>((resolve) => {
@@ -128,7 +127,7 @@ export default function Home() {
         });
         formData.append(`screenshot_${i}`, base64Data.split(",")[1]);
       }
-      
+
       const res = await fetch("/api/analyze", {
         method: "POST",
         body: formData,
@@ -139,22 +138,31 @@ export default function Home() {
         throw new Error(data?.error || "Audit request failed.");
       }
 
-      console.log("Analysis Result:", data);
-      setResult(data);
-
-      setTimeout(() => {
-        document.getElementById("audit-card")?.scrollIntoView({ behavior: "smooth" });
-      }, 100);
+      // Store result and redirect to audit page
+      localStorage.setItem(
+        "medo_audit_result",
+        JSON.stringify({ ...data, auditedUrl: submittedUrl })
+      );
+      router.push("/audit");
     } catch (error: unknown) {
       console.error("Error analyzing app:", error);
-      const errorMessage = error instanceof Error ? error.message : "Unable to reach the audit API.";
+      const errorMessage =
+        error instanceof Error ? error.message : "Unable to reach the audit API.";
       toast.error(errorMessage);
-      setResult({
-        launchScore: 0,
-        issues: [],
-        error: errorMessage,
-      });
+
+      // Store error result and redirect
+      localStorage.setItem(
+        "medo_audit_result",
+        JSON.stringify({
+          launchScore: 0,
+          issues: [],
+          error: errorMessage,
+          auditedUrl: submittedUrl,
+        })
+      );
+      router.push("/audit");
     } finally {
+      clearInterval(stepInterval);
       setLoading(false);
     }
   };
@@ -242,11 +250,22 @@ export default function Home() {
                     required
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
+                    disabled={loading}
                     className="h-12 flex-1 rounded-2xl bg-background/80 px-4 text-base"
                   />
                   <label className="flex h-12 cursor-pointer items-center justify-center rounded-2xl border border-border/70 bg-background/80 px-4 text-sm hover:bg-muted whitespace-nowrap">
-                    {screenshots.length > 0 ? `${screenshots.length} screenshots` : "Upload 7 screenshots"}
-                    <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => setScreenshots(Array.from(e.target.files || []).slice(0, 7))} />
+                    {screenshots.length > 0
+                      ? `${screenshots.length} screenshots`
+                      : "Upload 7 screenshots"}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={(e) =>
+                        setScreenshots(Array.from(e.target.files || []).slice(0, 7))
+                      }
+                    />
                   </label>
                 </div>
                 <Input
@@ -254,6 +273,7 @@ export default function Home() {
                   placeholder="GitHub Repository URL (Optional)"
                   value={githubUrl}
                   onChange={(e) => setGithubUrl(e.target.value)}
+                  disabled={loading}
                   className="h-12 w-full rounded-2xl bg-background/80 px-4 text-base"
                 />
                 <Button
@@ -262,125 +282,115 @@ export default function Home() {
                   disabled={loading}
                   className="h-12 w-full rounded-2xl px-6 text-sm font-semibold shadow-lg shadow-cyan-500/15 sm:w-auto"
                 >
-                  {loading ? "Analyzing..." : "Analyze app"}
-                  {!loading && <ArrowRight className="h-4 w-4 ml-2" />}
+                  {loading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Analyzing...
+                    </>
+                  ) : (
+                    <>
+                      Analyze app
+                      <ArrowRight className="ml-2 h-4 w-4" />
+                    </>
+                  )}
                 </Button>
               </form>
 
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <span className="text-sm text-muted-foreground">Try a sample:</span>
-                {["medo.dev", "resumeana.com", "acme.medo.dev"].map((item) => (
-                  <button
-                    key={item}
-                    type="button"
-                    onClick={() => {
-                      setUrl(item);
-                      setResult(null);
-                    }}
-                    className="rounded-full border border-border/70 bg-muted/50 px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-muted"
-                  >
-                    {item}
-                  </button>
-                ))}
-              </div>
+              {/* Loading progress indicator */}
+              {loading && (
+                <div className="mt-5 space-y-3 rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-4">
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin text-cyan-400" />
+                    <span className="text-sm font-medium text-cyan-300">
+                      {loadingSteps[loadingStep]}
+                    </span>
+                  </div>
+                  <div className="flex gap-1">
+                    {loadingSteps.map((_, idx) => (
+                      <div
+                        key={idx}
+                        className={`h-1 flex-1 rounded-full transition-all duration-500 ${
+                          idx <= loadingStep ? "bg-cyan-400" : "bg-muted/40"
+                        }`}
+                      />
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-cyan-300/50">
+                    This may take 15-30 seconds depending on the website size.
+                  </p>
+                </div>
+              )}
+
+              {!loading && (
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-muted-foreground">Try a sample:</span>
+                  {["medo.dev", "resumeana.com", "acme.medo.dev"].map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      onClick={() => setUrl(item)}
+                      className="rounded-full border border-border/70 bg-muted/50 px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-muted"
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
-          <div className="relative" id="audit-card">
+          {/* Static preview card */}
+          <div className="relative">
             <Card className="border-border/70 bg-background/80 shadow-[0_30px_90px_-45px_rgba(0,0,0,0.55)] backdrop-blur">
               <CardHeader className="space-y-2 border-b border-border/60 pb-5">
                 <CardTitle className="flex items-center gap-2 text-xl">
                   <BarChart3 className="h-5 w-5 text-cyan-500" />
-                  {result?.error ? "Audit failed" : "Live audit preview"}
+                  What you&apos;ll get
                 </CardTitle>
                 <CardDescription>
-                  {result?.error
-                    ? result.error
-                    : "A compact readout of what Medo Copilot will flag on a typical landing page."}
+                  A full audit report with scores, issues, and ready-to-paste fix
+                  prompts.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-5 pt-5">
-                <div className="grid gap-4 sm:grid-cols-[0.95fr_1.05fr]">
-                  <div className="rounded-2xl border border-border/70 bg-muted/35 p-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">
-                        Launch score
-                      </span>
-                      <span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                        {result?.analysisMode === "fallback" ? "Fallback" : "Live"}
-                      </span>
-                    </div>
-                    <div className="mt-5 flex items-end gap-2">
-                      <p className="text-5xl font-semibold tracking-tight">
-                        {result?.launchScore ?? 82}
-                      </p>
-                      <p className="pb-1 text-sm text-muted-foreground">/ 100</p>
-                    </div>
-                    <div className="mt-4 h-2 rounded-full bg-muted">
-                      <div
-                        className="h-2 rounded-full bg-gradient-to-r from-cyan-500 via-emerald-500 to-lime-500"
-                        style={{ width: `${result?.launchScore ?? 82}%` }}
-                      />
-                    </div>
-                    <p className="mt-3 text-sm text-muted-foreground">
-                      {result
-                        ? "Your audit result is ready."
-                        : "Strong base, but the hero and CTA need sharper proof."}
-                    </p>
+              <div className="space-y-5 p-5">
+                {/* Score preview */}
+                <div className="rounded-2xl border border-border/70 bg-muted/35 p-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Launch score</span>
+                    <span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                      AI-Powered
+                    </span>
                   </div>
-
-                  <div className="space-y-3 rounded-2xl border border-border/70 bg-background p-4">
-                    <div className="flex items-center gap-2 text-sm font-medium">
-                      <TriangleAlert className="h-4 w-4 text-amber-500" />
-                      Top issues
-                    </div>
-                    {result?.issues?.length
-                      ? result.issues.map((issue) => (
-                          <div
-                            key={issue.title}
-                            className="group relative flex flex-col gap-2 rounded-xl border border-border/60 bg-muted/40 p-4 transition-all hover:bg-muted/60"
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="flex items-center gap-2">
-                                <p className="text-sm font-medium text-foreground">
-                                  {issue.title}
-                                </p>
-                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
-                                  issue.severity === "high" ? "bg-red-500/10 text-red-500" :
-                                  issue.severity === "medium" ? "bg-amber-500/10 text-amber-500" :
-                                  "bg-blue-500/10 text-blue-500"
-                                }`}>
-                                  {issue.severity}
-                                </span>
-                              </div>
-                              <button 
-                                onClick={() => {
-                                  navigator.clipboard.writeText(issue.fixPrompt);
-                                  toast.success("Prompt copied to clipboard!");
-                                }}
-                                className="inline-flex items-center gap-1.5 rounded-lg bg-background/80 px-2 py-1 text-[11px] font-medium text-muted-foreground opacity-0 shadow-sm transition-all hover:text-cyan-500 group-hover:opacity-100"
-                              >
-                                <Copy className="h-3 w-3" />
-                                Copy Fix
-                              </button>
-                            </div>
-                            <p className="text-xs leading-5 text-muted-foreground">
-                              {issue.description}
-                            </p>
-                          </div>
-                        ))
-                      : fixes.map((fix) => (
-                          <div
-                            key={fix}
-                            className="flex items-start gap-3 rounded-xl border border-border/60 bg-muted/40 p-3"
-                          >
-                            <Copy className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                            <p className="text-sm leading-6 text-foreground">{fix}</p>
-                          </div>
-                        ))}
+                  <div className="mt-5 flex items-end gap-2">
+                    <p className="text-5xl font-semibold tracking-tight">82</p>
+                    <p className="pb-1 text-sm text-muted-foreground">/ 100</p>
+                  </div>
+                  <div className="mt-4 h-2 rounded-full bg-muted">
+                    <div
+                      className="h-2 rounded-full bg-gradient-to-r from-cyan-500 via-emerald-500 to-lime-500"
+                      style={{ width: "82%" }}
+                    />
                   </div>
                 </div>
 
+                {/* Preview fixes */}
+                <div className="space-y-3 rounded-2xl border border-border/70 bg-background p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                    Example suggestions
+                  </div>
+                  {previewFixes.map((fix) => (
+                    <div
+                      key={fix}
+                      className="flex items-start gap-3 rounded-xl border border-border/60 bg-muted/40 p-3"
+                    >
+                      <Copy className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                      <p className="text-sm leading-6 text-foreground">{fix}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Feature badges */}
                 <div className="grid gap-4 sm:grid-cols-3">
                   {checks.map((item) => {
                     const Icon = item.icon;
@@ -398,7 +408,7 @@ export default function Home() {
                     );
                   })}
                 </div>
-              </CardContent>
+              </div>
             </Card>
           </div>
         </section>
