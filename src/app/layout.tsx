@@ -4,6 +4,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 
 import { ClerkProvider } from "@clerk/nextjs";
+import { ui } from "@clerk/ui";
 
 export const metadata: Metadata = {
   title: "Medo Copilot",
@@ -16,7 +17,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <ClerkProvider>
+    <ClerkProvider ui={ui}>
       <html
         lang="en"
         suppressHydrationWarning
