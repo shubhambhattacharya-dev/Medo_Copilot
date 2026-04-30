@@ -1,10 +1,11 @@
 "use client";
-
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ScoreGauge } from "@/components/score-gauge";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { FRONTEND_CATEGORIES } from "@/types/audit";
+import type { AuditIssue } from "@/types/audit";
 import {
   ArrowLeft,
   AlertTriangle,
@@ -34,20 +35,9 @@ import {
   TrendingUp,
   Clock,
 } from "lucide-react";
-
-const FRONTEND_CATS = new Set(["copy","trust","cta","mobile","empty-state","error-state","accessibility","performance"]);
+import { escapeHtml } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────
-type AuditIssue = {
-  category?: string;
-  title: string;
-  severity: "high" | "medium" | "low";
-  description: string;
-  fixPrompt: string;
-  evidence?: string;
-  confidence?: "high" | "medium" | "low";
-};
-
 type AuditResult = {
   launchScore: number;
   issues: AuditIssue[];
@@ -175,23 +165,21 @@ function ErrorState({ error }: { error: string }) {
 export default function AuditPage() {
   const router = useRouter();
 
-  const getInitialData = () => {
-    if (typeof window === "undefined") return { status: "loading" as const, result: null, errorMsg: "" };
+  // Use useState lazy initializer to avoid hydration mismatch
+  const [initialData] = useState(() => {
+    if (typeof window === "undefined") return { status: "loading" as const, result: null as AuditResult | null, errorMsg: "" };
     try {
       const raw = localStorage.getItem("medo_audit_result");
-      if (!raw) return { status: "empty" as const, result: null, errorMsg: "" };
+      if (!raw) return { status: "empty" as const, result: null as AuditResult | null, errorMsg: "" };
       const parsed: AuditResult = JSON.parse(raw);
-      if (parsed.error && !parsed.issues?.length) return { status: "error" as const, result: null, errorMsg: parsed.error };
+      if (parsed.error && !parsed.issues?.length) return { status: "error" as const, result: null as AuditResult | null, errorMsg: parsed.error };
       return { status: "ready" as const, result: parsed, errorMsg: "" };
     } catch {
-      return { status: "error" as const, result: null, errorMsg: "Could not load audit data. The stored result may be corrupted." };
+      return { status: "error" as const, result: null as AuditResult | null, errorMsg: "Could not load audit data. The stored result may be corrupted." };
     }
-  };
+  });
 
-  const initialData = getInitialData();
-  const status = initialData.status;
-  const result = initialData.result;
-  const errorMsg = initialData.errorMsg;
+  const { status, result, errorMsg } = initialData;
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const [expandedIssue, setExpandedIssue] = useState<number | null>(null);
 
@@ -311,8 +299,8 @@ export default function AuditPage() {
 
         {/* ── Issue Card Component ── */}
         {(() => {
-          const feIssues = sortedIssues.filter(i => FRONTEND_CATS.has(i.category || ""));
-          const beIssues = sortedIssues.filter(i => !FRONTEND_CATS.has(i.category || ""));
+          const feIssues = sortedIssues.filter(i => FRONTEND_CATEGORIES.has(i.category));
+          const beIssues = sortedIssues.filter(i => !FRONTEND_CATEGORIES.has(i.category));
 
           const renderIssueCard = (issue: typeof sortedIssues[0], idx: number, globalIdx: number) => {
             const sev = severityConfig[issue.severity];
@@ -413,7 +401,7 @@ export default function AuditPage() {
                   </div>
                 </div>
                 <div className="mt-5 rounded-xl border border-emerald-500/10 bg-black/20 p-5">
-                  <pre className="whitespace-pre-wrap font-mono text-xs leading-7 text-emerald-100/70">{result.improvementPrompt}</pre>
+                  <pre className="whitespace-pre-wrap font-mono text-xs leading-7 text-emerald-100/70">{escapeHtml(result.improvementPrompt || "")}</pre>
                 </div>
                 <Button onClick={() => copyText(result.improvementPrompt!, "Improvement prompt")} className="mt-5 rounded-xl bg-emerald-600 px-8 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 hover:bg-emerald-500 hover:shadow-emerald-500/30">
                   <ClipboardCopy className="mr-2 h-4 w-4" /> Copy Full Prompt

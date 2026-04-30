@@ -18,7 +18,7 @@ const AI_PROVIDERS = [
   { value: "default", label: "Default (Free Tier)", hint: "Uses server API keys" },
   { value: "gemini", label: "Google Gemini", hint: "Best for vision + structured output" },
   { value: "groq", label: "Groq (Llama)", hint: "Fastest inference speed" },
-  { value: "openrouter", label: "OpenRouter", hint: "Access to 100+ models" },
+  { value: "openrouter", label: "OpenRouter (Claude)", hint: "Requires your own API key" },
 ];
 
 const checks = [
@@ -206,7 +206,8 @@ export default function Home() {
       }
 
       // Store result and redirect to audit page
-      localStorage.setItem(
+      const storage = typeof sessionStorage !== "undefined" ? sessionStorage : localStorage;
+      storage.setItem(
         "medo_audit_result",
         JSON.stringify({ ...data, auditedUrl: submittedUrl })
       );
@@ -218,7 +219,8 @@ export default function Home() {
       toast.error(errorMessage);
 
       // Store error result and redirect
-      localStorage.setItem(
+      const storage = typeof sessionStorage !== "undefined" ? sessionStorage : localStorage;
+      storage.setItem(
         "medo_audit_result",
         JSON.stringify({
           launchScore: 0,

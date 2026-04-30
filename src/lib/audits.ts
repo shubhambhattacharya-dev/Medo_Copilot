@@ -149,10 +149,10 @@ export async function saveUserSettings(userId: string, data: {
       now()
     )
     ON CONFLICT (user_id) DO UPDATE SET
-      vision_provider = COALESCE(EXCLUDED.vision_provider, user_settings.vision_provider),
-      vision_api_key_encrypted = COALESCE(EXCLUDED.vision_api_key_encrypted, user_settings.vision_api_key_encrypted),
-      code_provider = COALESCE(EXCLUDED.code_provider, user_settings.code_provider),
-      code_api_key_encrypted = COALESCE(EXCLUDED.code_api_key_encrypted, user_settings.code_api_key_encrypted),
+      vision_provider = EXCLUDED.vision_provider,
+      vision_api_key_encrypted = CASE WHEN EXCLUDED.vision_api_key_encrypted IS NOT NULL THEN EXCLUDED.vision_api_key_encrypted ELSE user_settings.vision_api_key_encrypted END,
+      code_provider = EXCLUDED.code_provider,
+      code_api_key_encrypted = CASE WHEN EXCLUDED.code_api_key_encrypted IS NOT NULL THEN EXCLUDED.code_api_key_encrypted ELSE user_settings.code_api_key_encrypted END,
       updated_at = now()
   `;
 

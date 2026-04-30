@@ -10,15 +10,13 @@ const getMasterKey = () => {
   // Convert hex to buffer, ensure it's exactly 32 bytes
   const buffer = Buffer.from(key, "hex");
   if (buffer.length !== 32) {
-    // Fallback/hash to 32 bytes if the user provided something weird
-    return crypto.createHash('sha256').update(String(key)).digest();
+    throw new Error(`ENCRYPTION_MASTER_KEY must be exactly 64 hex characters (32 bytes), got ${key.length} characters`);
   }
   return buffer;
 };
 
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
-const SALT_LENGTH = 64;
 const TAG_LENGTH = 16;
 
 /**

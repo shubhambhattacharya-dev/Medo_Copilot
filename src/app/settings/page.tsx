@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { UserButton, useUser } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,11 +20,10 @@ import {
 } from "lucide-react";
 
 const MODEL_OPTIONS = [
-  { value: "auto", label: "Auto (Best)", description: "Uses 2 AI models for best analysis accuracy" },
+  { value: "default", label: "Default (Best)", description: "Uses server keys with automatic fallback" },
   { value: "gemini", label: "Google Gemini", description: "Best for visual/screenshot analysis" },
   { value: "groq", label: "Groq (Llama)", description: "Fastest response time" },
-  { value: "openai", label: "OpenAI GPT-4", description: "Best reasoning & code understanding" },
-  { value: "anthropic", label: "Anthropic Claude", description: "Best for detailed analysis" },
+  { value: "openrouter", label: "OpenRouter (Claude)", description: "Requires your own API key" },
 ];
 
 interface UserSettings {
@@ -34,11 +34,12 @@ interface UserSettings {
 }
 
 export default function SettingsPage() {
+  const router = useRouter();
   const { user, isLoaded: userLoaded } = useUser();
   
-  const [visionProvider, setVisionProvider] = useState("auto");
+  const [visionProvider, setVisionProvider] = useState("default");
   const [visionKey, setVisionKey] = useState("");
-  const [codeProvider, setCodeProvider] = useState("auto");
+  const [codeProvider, setCodeProvider] = useState("default");
   const [codeKey, setCodeKey] = useState("");
   
   const [showVisionKey, setShowVisionKey] = useState(false);
@@ -50,7 +51,10 @@ export default function SettingsPage() {
 
   // Fetch current settings on mount
   useEffect(() => {
-    if (!userLoaded) return;
+    if (!userLoaded || !user) {
+      setLoading(false);
+      return;
+    }
     
     async function fetchSettings() {
       try {
@@ -58,8 +62,8 @@ export default function SettingsPage() {
         const data: UserSettings = await res.json();
         
         if (res.ok) {
-          setVisionProvider(data.visionProvider || "auto");
-          setCodeProvider(data.codeProvider || "auto");
+          setVisionProvider(data.visionProvider || "default");
+          setCodeProvider(data.codeProvider || "default");
         }
       } catch (err) {
         console.error("Failed to load settings:", err);
@@ -103,6 +107,7 @@ export default function SettingsPage() {
       setVisionKey("");
       setCodeKey("");
       toast.success("Settings saved successfully!");
+      setTimeout(() => router.push("/"), 1500);
     } catch (err) {
       console.error("Save error:", err);
       toast.error(err instanceof Error ? err.message : "Failed to save settings");
@@ -216,21 +221,21 @@ export default function SettingsPage() {
                 <div className="relative">
                   <Input
                     type={showVisionKey ? "text" : "password"}
-                    placeholder={visionProvider === "auto" ? "Uses system keys if empty" : "Enter your API key..."}
+                    placeholder={visionProvider === "default" ? "Uses system keys if empty" : "Enter your API key..."}
                     value={visionKey}
                     onChange={(e) => setVisionKey(e.target.value)}
-                    disabled={visionProvider === "auto"}
+                    disabled={visionProvider === "default"}
                   />
                   <button
                     type="button"
                     onClick={() => setShowVisionKey(!showVisionKey)}
-                    disabled={visionProvider === "auto"}
+                    disabled={visionProvider === "default"}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground disabled:opacity-50"
                   >
                     {showVisionKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
-                {visionProvider !== "auto" && (
+                {visionProvider !== "default" && (
                   <p className="text-xs text-muted-foreground mt-1">
                     Get key from provider&apos;s dashboard. Leave empty to use system keys.
                   </p>
@@ -274,21 +279,21 @@ export default function SettingsPage() {
                 <div className="relative">
                   <Input
                     type={showCodeKey ? "text" : "password"}
-                    placeholder={codeProvider === "auto" ? "Uses system keys if empty" : "Enter your API key..."}
+                    placeholder={codeProvider === "default" ? "Uses system keys if empty" : "Enter your API key..."}
                     value={codeKey}
                     onChange={(e) => setCodeKey(e.target.value)}
-                    disabled={codeProvider === "auto"}
+                    disabled={codeProvider === "default"}
                   />
                   <button
                     type="button"
                     onClick={() => setShowCodeKey(!showCodeKey)}
-                    disabled={codeProvider === "auto"}
+                    disabled={codeProvider === "default"}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground disabled:opacity-50"
                   >
                     {showCodeKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
-                {codeProvider !== "auto" && (
+                {codeProvider !== "default" && (
                   <p className="text-xs text-muted-foreground mt-1">
                     Get key from provider&apos;s dashboard. Leave empty to use system keys.
                   </p>
@@ -337,11 +342,10 @@ export default function SettingsPage() {
           <div className="rounded-xl border border-border/40 bg-muted/20 p-4 text-sm text-muted-foreground">
             <h4 className="font-medium text-foreground mb-2">About API Modes</h4>
             <ul className="space-y-1 text-xs">
-              <li>• <strong>Auto (Recommended):</strong> Uses 2 models sequentially for best accuracy</li>
+              <li>• <strong>Default (Recommended):</strong> Uses server keys with automatic fallback</li>
               <li>• <strong>Gemini:</strong> Best for analyzing screenshots visually</li>
               <li>• <strong>Groq:</strong> Free, fast, good for text analysis</li>
-              <li>• <strong>GPT-4:</strong> Best reasoning, needs paid API key</li>
-              <li>• <strong>Claude:</strong> Great for detailed code analysis</li>
+              <li>• <strong>OpenRouter:</strong> Access to Claude, requires your own key</li>
             </ul>
           </div>
         </div>

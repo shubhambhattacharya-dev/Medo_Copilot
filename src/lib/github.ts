@@ -1,5 +1,15 @@
+// Server-safe rate-limit cache (replaces browser-only sessionStorage)
+const rateLimitCache = new Map<string, number>();
+
 export async function fetchGithubRepoCode(githubUrl: string): Promise<{ text: string, reason?: string }> {
+  const RATE_LIMIT_KEY = "github-rl";
   try {
+    // Check cached rate limit
+    const cachedReset = rateLimitCache.get(RATE_LIMIT_KEY) ?? 0;
+    if (cachedReset > Date.now()) {
+      return { text: "", reason: "GitHub API rate limited. Try again later." };
+    }
+
     const url = githubUrl.replace("https://github.com/", "").replace(/\/$/, "");
     const parts = url.split("/");
     if (parts.length < 2) return { text: "", reason: "Invalid GitHub URL format." };
@@ -7,15 +17,39 @@ export async function fetchGithubRepoCode(githubUrl: string): Promise<{ text: st
     const repo = parts[1];
 
     console.log(`Fetching GitHub tree for ${owner}/${repo}...`);
-    const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`);
+    const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+      headers: { "Accept": "application/vnd.github.v3+json" }
+    });
+
+    // Handle 403 rate limit
+    if (repoRes.status === 403) {
+      const reset = repoRes.headers.get("X-RateLimit-Reset");
+      if (reset) {
+        rateLimitCache.set(RATE_LIMIT_KEY, parseInt(reset) * 1000);
+      }
+      return { text: "", reason: "GitHub API rate limit reached." };
+    }
+
     if (!repoRes.ok) return { text: "", reason: "Could not access GitHub repo. Make sure it is public." };
     const repoData = await repoRes.json();
     const defaultBranch = repoData.default_branch || "main";
 
-    const treeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${defaultBranch}?recursive=1`);
+    const treeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${defaultBranch}?recursive=1`, {
+      headers: { "Accept": "application/vnd.github.v3+json" }
+    });
+
+    // Handle 403 rate limit
+    if (treeRes.status === 403) {
+      const reset = treeRes.headers.get("X-RateLimit-Reset");
+      if (reset) {
+        rateLimitCache.set(RATE_LIMIT_KEY, parseInt(reset) * 1000);
+      }
+      return { text: "", reason: "GitHub API rate limit reached." };
+    }
+
     if (!treeRes.ok) return { text: "", reason: "Could not fetch repository tree." };
     const treeData = await treeRes.json();
-    
+
     if (!treeData || !treeData.tree) {
       return { text: "", reason: "Could not read repository tree (maybe GitHub API rate limit)." };
     }
