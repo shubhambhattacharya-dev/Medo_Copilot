@@ -279,22 +279,27 @@ export async function POST(req: NextRequest) {
               "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
               "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
               "Accept-Language": "en-US,en;q=0.9",
-              "Cache-Control": "no-cache",
-              "Pragma": "no-cache"
             },
             next: { revalidate: 0 }
           });
           
-          if (!res.ok) throw new Error(`Static fetch failed with status: ${res.status}`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
           
           const html = await res.text();
+          if (!html || html.length < 100) throw new Error("Empty or thin content received");
+
           const $ = cheerio.load(html);
           pageSignals = getPageSignals($);
           pageTitle = pageSignals.title;
           pageText = pageSignals.text.substring(0, 8000);
-          fetchReason = ""; // Clear error if static fetch worked
+          
+          // CRITICAL: Clear reason because we successfully got content!
+          fetchReason = ""; 
+          console.log(`Static fetch succeeded for ${fetchUrl} (${html.length} bytes)`);
         } catch (staticErr: unknown) {
-          fetchReason = `Audit failed: Could not reach the website. (${getErrorMessage(staticErr)})`;
+          const errMsg = getErrorMessage(staticErr);
+          fetchReason = `Fetch failed: Browser unavailable and Static Fallback failed (${errMsg}).`;
+          console.error(`[Audit API] All fetch methods failed for ${fetchUrl}: ${errMsg}`);
         }
       }
     }
