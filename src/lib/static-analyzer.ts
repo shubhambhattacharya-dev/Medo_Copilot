@@ -21,7 +21,7 @@ export class StaticAnalyzer {
     // ─── 1. SECURITY CHECKS (Weight: Heavy penalties) ───
     
     // Check 1: Hardcoded Secrets
-    const secretRegex = /['"](sk_test_|sk_live_|pk_|ghp_|AKIA|eyJ)[a-zA-Z0-9_-]{10,}['"]/g;
+    const secretRegex = /['"](sk_test_|sk_live_|pk_|ghp_|AKIA|AIza|eyJ)[a-zA-Z0-9_-]{10,}['"]/g;
     const secretsFound = (githubCodeText.match(secretRegex) || []).length;
     securityScore -= Math.min(secretsFound * 25, 60);
 
