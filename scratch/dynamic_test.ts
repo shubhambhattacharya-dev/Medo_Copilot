@@ -63,7 +63,7 @@ async function testDynamicUrl(url: string) {
 }
 
 async function main() {
-  const urls = ["https://example.com", "https://stripe.com"];
+  const urls = ["https://shubhambhattacharya.dev/#home"];
   for (const url of urls) {
     await testDynamicUrl(url);
   }
