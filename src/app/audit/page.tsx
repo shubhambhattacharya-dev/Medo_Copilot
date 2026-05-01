@@ -199,11 +199,19 @@ export default function AuditPage() {
       }
       const parsed: AuditResult = JSON.parse(raw);
 
-      // If we have issues or a score, it's a valid (maybe partial) result
-      if (parsed.issues?.length > 0 || parsed.launchScore > 0) {
-        setData({ status: "ready", result: parsed, errorMsg: "" });
-      } else if (parsed.error) {
-        setData({ status: "error", result: null, errorMsg: parsed.error });
+      // If we have issues, a score, or a specific failure mode/warning, it's a result we should show
+      if (
+        parsed.issues?.length > 0 || 
+        parsed.launchScore > 0 || 
+        parsed.analysisMode === "failed" || 
+        parsed.warning ||
+        parsed.error
+      ) {
+        if (parsed.error && !parsed.issues?.length && parsed.launchScore === 0) {
+           setData({ status: "error", result: null, errorMsg: parsed.error });
+        } else {
+           setData({ status: "ready", result: parsed, errorMsg: "" });
+        }
       } else {
         setData({ status: "empty", result: null, errorMsg: "" });
       }

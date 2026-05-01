@@ -32,6 +32,11 @@ async function getBrowser() {
 
 async function attachSavedAuditId(url: string, result: AuditResponse, userId?: string | null) {
   try {
+    // Don't save failed audits to cache, so users can retry immediately
+    if (result.analysisMode === "failed" || result.launchScore === 0) {
+      return result;
+    }
+
     const auditId = await saveAudit({
       url,
       launchScore: result.launchScore,
