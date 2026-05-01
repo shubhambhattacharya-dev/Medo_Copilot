@@ -246,7 +246,6 @@ export async function POST(req: NextRequest) {
           console.log(`Navigating to ${validUrl}...`);
           const navigationPromise = page.goto(validUrl, { waitUntil: "load", timeout: 15000 });
 
-          // Add timeout for navigation
           await Promise.race([
             navigationPromise,
             new Promise((_, reject) =>
@@ -254,52 +253,39 @@ export async function POST(req: NextRequest) {
             )
           ]);
 
-          console.log("Waiting for 1 second for JS hydration...");
           await page.waitForTimeout(1000);
-
-          console.log("Taking screenshot...");
           const screenshot = await page.screenshot({ type: "png" });
           screenshots.push(screenshot.toString("base64"));
 
-          console.log("Extracting content...");
           const html = await page.content();
           const $ = cheerio.load(html);
           pageSignals = getPageSignals($);
           pageTitle = pageSignals.title;
           pageText = pageSignals.text.substring(0, 8000);
         } catch (navErr: unknown) {
-          // More specific error handling for navigation issues
-          if (navErr instanceof Error) {
-            if (navErr.message.includes("timeout") || navErr.message.includes("Timeout")) {
-              fetchReason = `Navigation timeout: The website took too long to load. Please check if the URL is correct and the server is responding.`;
-            } else if (navErr.message.includes("net::ERR_NAME_NOT_RESOLVED") ||
-              navErr.message.includes("ENOTFOUND")) {
-              fetchReason = `DNS resolution failed: Unable to resolve the domain name. Please check if the URL is correct and the domain exists.`;
-            } else if (navErr.message.includes("net::ERR_CONNECTION_REFUSED")) {
-              fetchReason = `Connection refused: The server is not accepting connections. Please check if the server is running and accessible.`;
-            } else if (navErr.message.includes("net::ERR_CONNECTION_TIMED_OUT")) {
-              fetchReason = `Connection timed out: Unable to establish a connection to the server. Please check network connectivity and server status.`;
-            } else {
-              fetchReason = `Navigation failed: ${navErr.message}`;
-            }
-          } else {
-            fetchReason = "Navigation failed: Unknown error occurred while loading the page";
-          }
+          console.warn("Browser navigation failed, attempting static fetch fallback:", navErr);
+          throw navErr; // Trigger static fetch below
         } finally {
-          await context.close().catch(closeErr => {
-            console.warn("Error closing context:", closeErr);
-          });
+          await context.close().catch(() => {});
         }
       } catch (browserError: unknown) {
-        // More specific error handling for browser initialization
-        if (browserError instanceof Error) {
-          if (browserError.message.includes("Executable doesn't exist")) {
-            fetchReason = "Browser initialization failed: Playwright browsers are not installed. Please run 'npx playwright install' to install required browsers.";
-          } else {
-            fetchReason = `Browser initialization failed: ${browserError.message}`;
-          }
-        } else {
-          fetchReason = "Browser initialization failed: Unknown error occurred while initializing the browser";
+        console.log("Browser unavailable or failed, using static fetch fallback...");
+        try {
+          const res = await fetch(validUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36" },
+            next: { revalidate: 0 }
+          });
+          
+          if (!res.ok) throw new Error(`Static fetch failed with status: ${res.status}`);
+          
+          const html = await res.text();
+          const $ = cheerio.load(html);
+          pageSignals = getPageSignals($);
+          pageTitle = pageSignals.title;
+          pageText = pageSignals.text.substring(0, 8000);
+          fetchReason = ""; // Clear error if static fetch worked
+        } catch (staticErr: unknown) {
+          fetchReason = `Audit failed: Could not reach the website via Browser or Static Fetch. (${getErrorMessage(staticErr)})`;
         }
       }
     }
