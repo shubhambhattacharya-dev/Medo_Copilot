@@ -93,39 +93,36 @@ OUTPUT (JSON)
 
   static async fetchLighthouseScores(url: string) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000); // 12 seconds max
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     try {
       const key = process.env.PAGESPEED_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
       const endpoint = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&category=PERFORMANCE&category=ACCESSIBILITY&category=BEST_PRACTICES&category=SEO${key ? `&key=${key}` : ""}`;
-      const res = await fetch(endpoint, { 
-        next: { revalidate: 3600 },
-        signal: controller.signal
-      });
+      const res = await fetch(endpoint, { next: { revalidate: 3600 }, signal: controller.signal });
       clearTimeout(timeoutId);
       
       if (!res.ok) return null;
-      
       const data = await res.json();
       const categories = data?.lighthouseResult?.categories;
+      const audits = data?.lighthouseResult?.audits;
       if (!categories) return null;
+
+      const screenshotData = audits?.["final-screenshot"]?.details?.data;
+      const screenshot = screenshotData ? screenshotData.split(",")[1] : null;
 
       return {
         performance: Math.round((categories.performance?.score || 0) * 100),
         accessibility: Math.round((categories.accessibility?.score || 0) * 100),
         bestPractices: Math.round((categories['best-practices']?.score || 0) * 100),
         seo: Math.round((categories.seo?.score || 0) * 100),
+        screenshot,
       };
     } catch (err) {
       clearTimeout(timeoutId);
-      console.warn("Lighthouse fetch failed or timed out:", err);
       return null;
     }
   }
 
-  /**
-   * Orchestrates the dual-analysis process + Lighthouse with strict per-task timeouts
-   */
   static async runFullAudit(
     visionProvider: AiProvider,
     codeProvider: AiProvider | null,
@@ -133,7 +130,7 @@ OUTPUT (JSON)
     githubCodeText: string | null,
     contextData: { url: string; title: string; text: string; signals: PageSignals }
   ): Promise<AuditResponse> {
-    const TASK_TIMEOUT = 25000; // 25s timeout per sub-task
+    const TASK_TIMEOUT = 28000;
 
     const safeTask = async <T>(taskPromise: Promise<T>, taskName: string): Promise<T | null> => {
       try {
@@ -149,89 +146,60 @@ OUTPUT (JSON)
       }
     };
 
-    // Task 1: Vision Analysis
-    const frontendPrompt = this.getFrontendPrompt(
-      contextData.url,
-      contextData.title,
-      contextData.text,
-      contextData.signals,
-      visionProvider.supportsVision !== false
-    );
+    // 1. Get metrics & screenshot early
+    const lighthouseMetrics = await safeTask(this.fetchLighthouseScores(contextData.url), "Lighthouse");
 
+    const finalScreenshots = [...screenshots];
+    if (finalScreenshots.length === 0 && lighthouseMetrics?.screenshot) {
+      console.log("[Audit Service] Using Lighthouse fallback screenshot");
+      finalScreenshots.push(lighthouseMetrics.screenshot);
+    }
+
+    // 2. Vision Analysis
     const visionTask = safeTask(generateText({
       model: visionProvider.model,
       messages: [
         {
           role: "user",
           content: [
-            { type: "text", text: frontendPrompt },
-            ...screenshots.map(s => ({ type: "image" as const, image: Buffer.from(s, "base64"), mediaType: "image/png" as const }))
+            { type: "text", text: this.getFrontendPrompt(contextData.url, contextData.title, contextData.text, contextData.signals, !!finalScreenshots.length) },
+            ...finalScreenshots.map(s => ({ type: "image" as const, image: Buffer.from(s, "base64"), mediaType: "image/png" as const }))
           ]
         }
       ]
     }), `Vision (${visionProvider.name})`);
 
-    // Task 2: Code Analysis (Optional)
+    // 3. Code Analysis
     const codeTask = codeProvider && githubCodeText
-      ? safeTask(generateText({
-          model: codeProvider.model,
-          prompt: this.getBackendPrompt(githubCodeText)
-        }), `Code (${codeProvider.name})`)
+      ? safeTask(generateText({ model: codeProvider.model, prompt: this.getBackendPrompt(githubCodeText) }), `Code (${codeProvider.name})`)
       : Promise.resolve(null);
 
-    // Task 3: Lighthouse PSI Analysis
-    const lighthouseTask = safeTask(this.fetchLighthouseScores(contextData.url), "Lighthouse");
+    // 4. Static Backend Analysis
+    const backendMetrics = githubCodeText ? StaticAnalyzer.analyze(githubCodeText) : null;
 
-    // Task 4: Backend Static Analysis (Synchronous/Instant)
-    let backendMetrics = null;
-    if (githubCodeText) {
-      try {
-        backendMetrics = StaticAnalyzer.analyze(githubCodeText);
-      } catch (e) {
-        console.error("Static Analysis failed:", e);
-      }
-    }
-
-    // Run all tasks in parallel
-    const [visionTaskRes, codeTaskRes, lighthouseMetrics] = await Promise.all([
-      visionTask,
-      codeTask,
-      lighthouseTask
-    ]);
+    const [visionTaskRes, codeTaskRes] = await Promise.all([visionTask, codeTask]);
 
     if (!visionTaskRes && !lighthouseMetrics && !backendMetrics) {
       return {
-        issues: [],
-        launchScore: 0,
-        verdict: "broken",
-        summary: "All analysis engines failed or timed out. This can happen if the AI provider is overloaded or the URL is not publicly accessible.",
-        improvementPrompt: "N/A",
-        analysisMode: "failed",
-        provider: "None",
-        warning: "CRITICAL FAILURE: No analysis data could be generated. Please check your API keys and network connectivity."
+        issues: [], launchScore: 0, verdict: "broken",
+        summary: "All engines failed. Check API keys.",
+        improvementPrompt: "N/A", analysisMode: "failed", provider: "None",
+        warning: "CRITICAL FAILURE: No analysis data generated."
       };
     }
 
     let visionResult: AuditResponse | null = null;
     let codeResult: AuditResponse | null = null;
 
-    if (visionTaskRes && visionTaskRes.text) {
-      try {
-        visionResult = parseJsonFromText(visionTaskRes.text);
-      } catch (e) {
-        console.warn("Failed to parse vision result", e);
-      }
+    if (visionTaskRes?.text) {
+      try { visionResult = parseJsonFromText(visionTaskRes.text); } catch {}
+    }
+    if (codeTaskRes?.text) {
+      try { codeResult = parseJsonFromText(codeTaskRes.text); } catch {}
     }
 
-    if (codeTaskRes && codeTaskRes.text) {
-      try {
-        codeResult = parseJsonFromText(codeTaskRes.text);
-      } catch {
-        codeResult = null;
-      }
-    }
-
-    return this.mergeResults(visionResult, codeResult, lighthouseMetrics, backendMetrics, visionProvider.name, codeProvider?.name);
+    const { screenshot, ...cleanLighthouse } = lighthouseMetrics || {};
+    return this.mergeResults(visionResult, codeResult, cleanLighthouse as LighthouseMetrics, backendMetrics, visionProvider.name, codeProvider?.name);
   }
 
   private static mergeResults(
