@@ -148,6 +148,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "URL is invalid" }, { status: 400 });
     }
 
+    // Strip fragment for the actual fetch/analysis as it's client-side only
+    const fetchUrl = parsedUrl.origin + parsedUrl.pathname + parsedUrl.search;
+
     if (!["http:", "https:"].includes(parsedUrl.protocol)) {
       return NextResponse.json(
         { error: "Only HTTP and HTTPS URLs can be audited" },
@@ -271,8 +274,14 @@ export async function POST(req: NextRequest) {
       } catch (browserError: unknown) {
         console.log("Browser unavailable or failed, using static fetch fallback...");
         try {
-          const res = await fetch(validUrl, {
-            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36" },
+          const res = await fetch(fetchUrl, {
+            headers: { 
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+              "Accept-Language": "en-US,en;q=0.9",
+              "Cache-Control": "no-cache",
+              "Pragma": "no-cache"
+            },
             next: { revalidate: 0 }
           });
           
@@ -285,7 +294,7 @@ export async function POST(req: NextRequest) {
           pageText = pageSignals.text.substring(0, 8000);
           fetchReason = ""; // Clear error if static fetch worked
         } catch (staticErr: unknown) {
-          fetchReason = `Audit failed: Could not reach the website via Browser or Static Fetch. (${getErrorMessage(staticErr)})`;
+          fetchReason = `Audit failed: Could not reach the website. (${getErrorMessage(staticErr)})`;
         }
       }
     }
