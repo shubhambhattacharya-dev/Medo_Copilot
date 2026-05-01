@@ -108,6 +108,8 @@ function getPageSignals($: cheerio.CheerioAPI): PageSignals {
     .filter((_, element) => !String($(element).attr("alt") || "").trim())
     .length;
 
+  const hasViewport = $("meta[name='viewport']").length > 0;
+
   $("script, style, svg, img, iframe, noscript").remove();
 
   const text = $("body").text().replace(/\s+/g, " ").trim();
@@ -121,6 +123,7 @@ function getPageSignals($: cheerio.CheerioAPI): PageSignals {
     links,
     imageCount,
     imagesMissingAlt,
+    hasViewport,
   };
 }
 
@@ -257,7 +260,7 @@ function buildRuleIssues(signals: PageSignals, reason?: string) {
   }
 
   // 6. Mobile Readiness
-  if (!normalized.includes("viewport") || !normalized.includes("width=device-width")) {
+  if (!signals.hasViewport) {
     issues.push(
       createIssue(
         "mobile",
@@ -319,7 +322,7 @@ function buildMeasuredResult({
     .filter(i => FRONTEND_CATEGORIES.has(i.category))
     .reduce((total, issue) => total + scorePenalty(issue), 0);
 
-  const lighthouseAvg = lighthouse 
+  const lighthouseAvg = (lighthouse && typeof lighthouse.performance === 'number') 
     ? Math.round((lighthouse.performance + lighthouse.accessibility + lighthouse.bestPractices + lighthouse.seo) / 4)
     : null;
 
@@ -336,7 +339,9 @@ function buildMeasuredResult({
     ? Math.round((backendMetrics.security + backendMetrics.codeQuality + backendMetrics.maintainability) / 3)
     : (issues.some(i => !FRONTEND_CATEGORIES.has(i.category)) ? 70 : 100);
 
-  const launchScore = Math.round((frontendScore + (backendMetrics ? backendScore : frontendScore)) / (backendMetrics ? 2 : 1));
+  const launchScore = backendMetrics 
+    ? Math.round((frontendScore + backendScore) / 2)
+    : frontendScore;
   const verdict = getVerdict(launchScore, issues);
 
   return {

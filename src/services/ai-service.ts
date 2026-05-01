@@ -24,7 +24,7 @@ export class AiService {
         const customGoogle = createGoogleGenerativeAI({ apiKey: key });
         return {
           name: "gemini",
-          model: customGoogle(process.env.GOOGLE_GENERATIVE_AI_MODEL || "gemini-1.5-flash"),
+          model: customGoogle(process.env.GOOGLE_GENERATIVE_AI_MODEL || "gemini-2.0-flash"),
           supportsSchema: true,
           supportsVision: true
         };

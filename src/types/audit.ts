@@ -108,6 +108,7 @@ export type PageSignals = {
   links: string[];
   imageCount: number;
   imagesMissingAlt: number;
+  hasViewport: boolean;
 };
 
 /** Frontend issue categories for filtering */

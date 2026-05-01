@@ -2,7 +2,7 @@ import { generateText } from "ai";
 import { AiProvider } from "./ai-service";
 import type { AuditResponse, LighthouseMetrics, BackendMetrics, PageSignals } from "@/types/audit";
 import { StaticAnalyzer } from "@/lib/static-analyzer";
-import { mergeIssues, parseJsonFromText } from "@/lib/audit-helpers";
+import { mergeIssues, parseJsonFromText, buildRuleIssues, buildMeasuredResult } from "@/lib/audit-helpers";
 
 export class AuditService {
   static getFrontendPrompt(validUrl: string, pageTitle: string, pageText: string, pageSignals: PageSignals, supportsVision: boolean) {
@@ -179,14 +179,7 @@ OUTPUT (JSON)
 
     const [visionTaskRes, codeTaskRes] = await Promise.all([visionTask, codeTask]);
 
-    if (!visionTaskRes && !lighthouseMetrics && !backendMetrics) {
-      return {
-        issues: [], launchScore: 0, verdict: "broken",
-        summary: "All engines failed. Check API keys.",
-        improvementPrompt: "N/A", analysisMode: "failed", provider: "None",
-        warning: "CRITICAL FAILURE: No analysis data generated."
-      };
-    }
+
 
     let visionResult: AuditResponse | null = null;
     let codeResult: AuditResponse | null = null;
@@ -198,8 +191,15 @@ OUTPUT (JSON)
       try { codeResult = parseJsonFromText(codeTaskRes.text); } catch {}
     }
 
-    const { screenshot, ...cleanLighthouse } = lighthouseMetrics || {};
-    return this.mergeResults(visionResult, codeResult, cleanLighthouse as LighthouseMetrics, backendMetrics, visionProvider.name, codeProvider?.name);
+    const ruleIssues = buildRuleIssues(contextData.signals);
+    const cleanLighthouse = lighthouseMetrics ? {
+      performance: lighthouseMetrics.performance,
+      accessibility: lighthouseMetrics.accessibility,
+      bestPractices: lighthouseMetrics.bestPractices,
+      seo: lighthouseMetrics.seo
+    } : null;
+
+    return this.mergeResults(visionResult, codeResult, cleanLighthouse, backendMetrics, visionProvider.name, ruleIssues, codeProvider?.name);
   }
 
   private static mergeResults(
@@ -208,6 +208,7 @@ OUTPUT (JSON)
     lighthouse: LighthouseMetrics | null,
     backendMetrics: BackendMetrics | null,
     visionName: string,
+    ruleIssues: AuditIssue[],
     codeName?: string
   ): AuditResponse {
     const usedTools: string[] = [];
@@ -218,20 +219,19 @@ OUTPUT (JSON)
 
     // Graceful Fallback: If AI completely failed
     if (!vision && !code) {
-      const fallbackFrontendScore = lighthouse
-        ? Math.round((lighthouse.performance + lighthouse.accessibility + lighthouse.bestPractices + lighthouse.seo) / 4)
-        : 0;
-      const fallbackBackendScore = backendMetrics
-        ? Math.round((backendMetrics.security + backendMetrics.codeQuality + backendMetrics.maintainability) / 3)
-        : 0;
-      const fallbackLaunchScore = Math.round((fallbackFrontendScore + fallbackBackendScore) / 2);
+      const measured = buildMeasuredResult({
+        url: "", // Not used for score calculation here
+        title: "",
+        issues: ruleIssues,
+        lighthouse,
+        backendMetrics
+      });
 
       const toolNote = usedTools.length > 0
         ? `This report was generated using: ${usedTools.join(", ")}.`
         : "No analysis tools were available.";
 
-      // Generate issues from Lighthouse if AI failed
-      const fallbackIssues: any[] = [];
+      const fallbackIssues = [...measured.issues];
       if (lighthouse) {
         if (lighthouse.performance < 70) {
           fallbackIssues.push({
@@ -284,25 +284,11 @@ OUTPUT (JSON)
       }
 
       return {
+        ...measured,
         issues: fallbackIssues,
-        launchScore: fallbackLaunchScore,
-        frontendScore: fallbackFrontendScore,
-        backendScore: fallbackBackendScore,
-        verdict: fallbackLaunchScore >= 70 ? "needs-fixes" : "broken",
         summary: `AI Analysis unavailable (quota limit reached). ${toolNote} We've generated a report based on Lighthouse and Static Code Analysis.`,
-        improvementPrompt: `Frontend Improvements (based on Lighthouse):\n${
-          lighthouse
-            ? `Improve performance (current: ${lighthouse.performance}/100), accessibility (${lighthouse.accessibility}/100), best practices (${lighthouse.bestPractices}/100), and SEO (${lighthouse.seo}/100).`
-            : "No frontend metrics available."
-        }\n\nBackend Improvements (based on Static Analyzer):\n${
-          backendMetrics
-            ? `Address security issues (score: ${backendMetrics.security}/100), code quality (${backendMetrics.codeQuality}/100), and maintainability (${backendMetrics.maintainability}/100).`
-            : "No backend metrics available."
-        }`,
         analysisMode: "fallback-deterministic",
         provider: usedTools.join(" + ") || "None",
-        lighthouse: lighthouse || undefined,
-        backendMetrics: backendMetrics || undefined,
         warning: "AI Analysis unavailable. Showing findings from Lighthouse and Static Analysis tools.",
       };
     }
