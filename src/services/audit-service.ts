@@ -343,9 +343,19 @@ OUTPUT (JSON)
     // Use mergeIssues to deduplicate between vision and code issues
     const allIssues = mergeIssues(vision?.issues || [], code?.issues || []);
 
-    const frontendScore = vision?.launchScore ?? (lighthouse ? Math.round((lighthouse.performance + lighthouse.accessibility + lighthouse.bestPractices + lighthouse.seo) / 4) : 0);
+    // Improved Scoring Logic for partial/Vercel environments
+    // If vision is missing (Vercel), Lighthouse becomes a much stronger signal for the frontend score
+    const frontendScore = vision 
+      ? (vision.launchScore * 0.7 + (lighthouse ? lighthouse.performance * 0.3 : vision.launchScore * 0.3))
+      : (lighthouse ? Math.round((lighthouse.performance + lighthouse.accessibility + lighthouse.bestPractices + lighthouse.seo) / 4) : 0);
+    
     const backendScore = code?.launchScore ?? (backendMetrics ? Math.round((backendMetrics.security + backendMetrics.codeQuality + backendMetrics.maintainability) / 3) : 0);
-    const finalScore = Math.round((frontendScore + backendScore) / 2);
+    
+    const finalScore = Math.round(
+      backendMetrics 
+        ? (frontendScore * 0.5 + backendScore * 0.5) 
+        : frontendScore
+    );
 
     let summaryText = "";
     if (vision && code) {
@@ -354,8 +364,10 @@ OUTPUT (JSON)
       summaryText = vision.summary;
     } else if (code) {
       summaryText = code.summary;
+    } else {
+      summaryText = "Analysis based on automated performance and security scans.";
     }
-    summaryText += " Since AI was used, this report includes more precise and contextual results.";
+    summaryText += vision ? " Since AI was used, this report includes more precise results." : " (AI visual audit was skipped on this environment).";
 
     const toolNote = `Analysis performed using: ${usedTools.join(", ")}.`;
 
