@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { UserButton, useUser } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,7 +33,6 @@ interface UserSettings {
 }
 
 export default function SettingsPage() {
-  const router = useRouter();
   const { user, isLoaded: userLoaded } = useUser();
   
   const [visionProvider, setVisionProvider] = useState("default");
@@ -51,29 +49,38 @@ export default function SettingsPage() {
 
   // Fetch current settings on mount
   useEffect(() => {
-    if (!userLoaded || !user) {
-      setLoading(false);
-      return;
-    }
-    
-    async function fetchSettings() {
+    if (!userLoaded) return;
+
+    let cancelled = false;
+
+    async function init() {
+      if (!user) {
+        return "no-user" as const;
+      }
+
       try {
         const res = await fetch("/api/user/settings");
-        if (res.ok) {
+        if (!cancelled && res.ok) {
           const data: UserSettings = await res.json();
           setVisionProvider(data.visionProvider || "default");
           setCodeProvider(data.codeProvider || "default");
         }
       } catch (err) {
         console.error("Failed to load settings:", err);
-        toast.error("Failed to load settings");
+        if (!cancelled) toast.error("Failed to load settings");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
-    
-    fetchSettings();
-  }, [userLoaded, user?.id]);
+
+    init().then((result) => {
+      if (result === "no-user" && !cancelled) {
+        setLoading(false);
+      }
+    });
+
+    return () => { cancelled = true; };
+  }, [userLoaded, user]);
 
   const handleSave = async () => {
     if (!user) {
@@ -114,13 +121,13 @@ export default function SettingsPage() {
     }
   };
 
-  // Loading state
-  if (!userLoaded || loading) {
+  // Loading state for User
+  if (!userLoaded) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="h-8 w-8 animate-spin text-cyan-400" />
-          <p className="text-muted-foreground">Loading settings...</p>
+          <p className="text-muted-foreground">Loading...</p>
         </div>
       </div>
     );
@@ -202,7 +209,8 @@ export default function SettingsPage() {
                 <select
                   value={visionProvider}
                   onChange={(e) => setVisionProvider(e.target.value)}
-                  className="w-full rounded-xl border border-border/60 bg-background px-4 py-2.5 text-sm"
+                  disabled={loading}
+                  className="w-full rounded-xl border border-border/60 bg-background px-4 py-2.5 text-sm disabled:opacity-50"
                 >
                   {MODEL_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>
@@ -260,7 +268,8 @@ export default function SettingsPage() {
                 <select
                   value={codeProvider}
                   onChange={(e) => setCodeProvider(e.target.value)}
-                  className="w-full rounded-xl border border-border/60 bg-background px-4 py-2.5 text-sm"
+                  disabled={loading}
+                  className="w-full rounded-xl border border-border/60 bg-background px-4 py-2.5 text-sm disabled:opacity-50"
                 >
                   {MODEL_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>
@@ -303,11 +312,11 @@ export default function SettingsPage() {
           {/* Save Button */}
           <Button 
             onClick={handleSave} 
-            disabled={saving} 
+            disabled={saving || loading} 
             className="w-full h-12"
           >
-            {saving ? (
-              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</>
+            {saving || loading ? (
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {loading ? "Loading settings..." : "Saving..."}</>
             ) : saved ? (
               <><CheckCircle2 className="mr-2 h-4 w-4" /> Saved!</>
             ) : (

@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as cheerio from "cheerio";
-import { chromium } from "playwright";
-import { saveAudit, getUserSettings } from "@/lib/audits";
+import { chromium, type Browser } from "playwright";
+import { saveAudit, getUserSettings, getCachedAudit } from "@/lib/audits";
 import { fetchGithubRepoCode } from "@/lib/github";
 import { auth } from "@clerk/nextjs/server";
 import { AiService } from "@/services/ai-service";
 import { AuditService } from "@/services/audit-service";
 import { checkRateLimitAsync, rateLimitResponse } from "@/lib/rate-limit";
+import { StaticAnalyzer } from "@/lib/static-analyzer";
 import {
   getPageSignals,
   buildRuleIssues,
@@ -16,7 +17,20 @@ import {
   type PageSignals,
 } from "@/lib/audit-helpers";
 
-async function attachSavedAuditId(url: string, result: AuditResponse) {
+// Browser pooling
+let browserInstance: Browser | null = null;
+
+async function getBrowser() {
+  if (!browserInstance || !browserInstance.isConnected()) {
+    browserInstance = await chromium.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+    });
+  }
+  return browserInstance;
+}
+
+async function attachSavedAuditId(url: string, result: AuditResponse, userId?: string | null) {
   try {
     const auditId = await saveAudit({
       url,
@@ -30,6 +44,7 @@ async function attachSavedAuditId(url: string, result: AuditResponse) {
       lighthouse: result.lighthouse,
       backendMetrics: result.backendMetrics,
       warning: result.warning,
+      userId: userId ?? undefined,
     });
 
     return auditId ? { ...result, auditId } : result;
@@ -64,7 +79,11 @@ function isPrivateOrLocalUrl(targetUrl: URL) {
   );
 }
 
+export const maxDuration = 60; // Max duration for Vercel (if on Pro)
+
 export async function POST(req: NextRequest) {
+  const startTime = Date.now();
+  console.log("[Audit API] Request started");
   try {
     const rateLimit = await checkRateLimitAsync(req, { windowMs: 60 * 1000, maxRequests: 5 });
     if (!rateLimit.success) {
@@ -88,8 +107,10 @@ export async function POST(req: NextRequest) {
 
     // Fetch user API keys from database (if authenticated)
     let userSettings = null;
+    let userId: string | null = null;
     try {
-      const { userId } = await auth();
+      const authResult = await auth();
+      userId = authResult.userId || null;
       if (userId) {
         userSettings = await getUserSettings(userId);
       }
@@ -184,7 +205,15 @@ export async function POST(req: NextRequest) {
     });
 
     for (const screenshot of screenshots) {
-      const decoded = Buffer.from(screenshot, "base64");
+      let decoded: Buffer;
+      try {
+        decoded = Buffer.from(screenshot, "base64");
+      } catch {
+        return NextResponse.json(
+          { error: "Invalid screenshot format. Must be valid base64." },
+          { status: 400 }
+        );
+      }
       if (decoded.length > 5 * 1024 * 1024) {
         return NextResponse.json(
           { error: "Screenshot too large. Must be under 5MB." },
@@ -201,10 +230,7 @@ export async function POST(req: NextRequest) {
     if (screenshots.length === 0) {
       try {
         console.log(`Launching browser for ${validUrl}...`);
-        const browser = await chromium.launch({
-          headless: true,
-          args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-        });
+        const browser = await getBrowser();
         const context = await browser.newContext({
           viewport: { width: 1280, height: 800 },
           userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
@@ -255,8 +281,8 @@ export async function POST(req: NextRequest) {
             fetchReason = "Navigation failed: Unknown error occurred while loading the page";
           }
         } finally {
-          await browser.close().catch(closeErr => {
-            console.warn("Error closing browser:", closeErr);
+          await context.close().catch(closeErr => {
+            console.warn("Error closing context:", closeErr);
           });
         }
       } catch (browserError: unknown) {
@@ -275,15 +301,31 @@ export async function POST(req: NextRequest) {
 
     // Build rule-based issues and measured result (used as fallback)
     const ruleIssues = buildRuleIssues(pageSignals, fetchReason || undefined);
+    
+    // Early fetch of deterministic metrics to ensure fallback richness
+    const [lighthouse, backendMetrics] = await Promise.all([
+      AuditService.fetchLighthouseScores(validUrl),
+      githubCodeText ? StaticAnalyzer.analyze(githubCodeText) : Promise.resolve(null)
+    ]);
+
     const fallbackResult = buildMeasuredResult({
       url: validUrl,
       title: pageTitle,
       issues: ruleIssues,
+      lighthouse,
+      backendMetrics,
     });
 
     if (fetchReason && !pageText) {
       console.error(`Audit Failed: ${fetchReason}`);
-      return NextResponse.json(await attachSavedAuditId(validUrl, fallbackResult));
+      return NextResponse.json(await attachSavedAuditId(validUrl, fallbackResult, userId));
+    }
+
+    // Check for cached audit (within last 1 hour)
+    const cachedAudit = await getCachedAudit(validUrl);
+    if (cachedAudit) {
+      console.log(`[Audit API] Returning cached audit for ${validUrl}`);
+      return NextResponse.json(cachedAudit);
     }
 
     // Resolve AI Models
@@ -292,7 +334,7 @@ export async function POST(req: NextRequest) {
 
     if (!visionModel) {
       console.error("No AI models configured! Check your keys.");
-      return NextResponse.json(await attachSavedAuditId(validUrl, fallbackResult));
+      return NextResponse.json(await attachSavedAuditId(validUrl, fallbackResult, userId));
     }
 
     // Run Analysis via AuditService
@@ -311,7 +353,9 @@ export async function POST(req: NextRequest) {
       );
 
       // Save and Return
-      return NextResponse.json(await attachSavedAuditId(validUrl, auditResult));
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      console.log(`[Audit API] Analysis complete in ${duration}s`);
+      return NextResponse.json(await attachSavedAuditId(validUrl, auditResult, userId));
 
     } catch (llmError: unknown) {
       console.error("[Analysis Error]", llmError);
@@ -322,7 +366,7 @@ export async function POST(req: NextRequest) {
         warning: `AI Analysis failed: ${getErrorMessage(llmError)}. Showing deterministic metrics only.`
       };
       
-      return NextResponse.json(await attachSavedAuditId(validUrl, errorResult));
+      return NextResponse.json(await attachSavedAuditId(validUrl, errorResult, userId));
     }
   } catch (error) {
     console.error("Audit API Error:", error);

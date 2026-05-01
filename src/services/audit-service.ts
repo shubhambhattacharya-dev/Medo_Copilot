@@ -1,8 +1,8 @@
 import { generateText } from "ai";
 import { AiProvider } from "./ai-service";
-import type { AuditIssue } from "@/types/audit";
-import type { PageSignals } from "@/lib/audit-helpers";
+import type { AuditResponse, LighthouseMetrics, BackendMetrics, PageSignals } from "@/types/audit";
 import { StaticAnalyzer } from "@/lib/static-analyzer";
+import { mergeIssues, parseJsonFromText } from "@/lib/audit-helpers";
 
 export class AuditService {
   static getFrontendPrompt(validUrl: string, pageTitle: string, pageText: string, pageSignals: PageSignals, supportsVision: boolean) {
@@ -123,7 +123,7 @@ OUTPUT (JSON)
   }
 
   /**
-   * Orchestrates the dual-analysis process + Lighthouse
+   * Orchestrates the dual-analysis process + Lighthouse with strict per-task timeouts
    */
   static async runFullAudit(
     visionProvider: AiProvider,
@@ -131,8 +131,22 @@ OUTPUT (JSON)
     screenshots: string[],
     githubCodeText: string | null,
     contextData: { url: string; title: string; text: string; signals: PageSignals }
-  ): Promise<any> {
-    const tasks: Promise<any>[] = [];
+  ): Promise<AuditResponse> {
+    const TASK_TIMEOUT = 25000; // 25s timeout per sub-task
+
+    const safeTask = async <T>(taskPromise: Promise<T>, taskName: string): Promise<T | null> => {
+      try {
+        return await Promise.race([
+          taskPromise,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`${taskName} timed out after ${TASK_TIMEOUT}ms`)), TASK_TIMEOUT)
+          )
+        ]);
+      } catch (err) {
+        console.error(`[Audit Task Failed] ${taskName}:`, err instanceof Error ? err.message : String(err));
+        return null;
+      }
+    };
 
     // Task 1: Vision Analysis
     const frontendPrompt = this.getFrontendPrompt(
@@ -143,7 +157,7 @@ OUTPUT (JSON)
       visionProvider.supportsVision !== false
     );
 
-    tasks.push(generateText({
+    const visionTask = safeTask(generateText({
       model: visionProvider.model,
       messages: [
         {
@@ -154,66 +168,63 @@ OUTPUT (JSON)
           ]
         }
       ]
-    }));
+    }), `Vision (${visionProvider.name})`);
 
     // Task 2: Code Analysis (Optional)
-    if (codeProvider && githubCodeText) {
-      tasks.push(generateText({
-        model: codeProvider.model,
-        prompt: this.getBackendPrompt(githubCodeText)
-      }));
-    } else {
-      tasks.push(Promise.resolve(null)); // Keep array index alignment
-    }
+    const codeTask = codeProvider && githubCodeText
+      ? safeTask(generateText({
+          model: codeProvider.model,
+          prompt: this.getBackendPrompt(githubCodeText)
+        }), `Code (${codeProvider.name})`)
+      : Promise.resolve(null);
 
     // Task 3: Lighthouse PSI Analysis
-    tasks.push(this.fetchLighthouseScores(contextData.url));
+    const lighthouseTask = safeTask(this.fetchLighthouseScores(contextData.url), "Lighthouse");
 
-    // Task 4: Backend Static Analysis (Synchronous, but we run it alongside)
+    // Task 4: Backend Static Analysis (Synchronous/Instant)
     let backendMetrics = null;
     if (githubCodeText) {
-      backendMetrics = StaticAnalyzer.analyze(githubCodeText);
+      try {
+        backendMetrics = StaticAnalyzer.analyze(githubCodeText);
+      } catch (e) {
+        console.error("Static Analysis failed:", e);
+      }
     }
 
-    const results = await Promise.allSettled(tasks);
-
-    const visionTaskRes = results[0].status === 'fulfilled' ? results[0].value : null;
-    const codeTaskRes = results[1]?.status === 'fulfilled' ? results[1].value : null;
-    const lighthouseMetrics = results[2]?.status === 'fulfilled' ? results[2].value : null;
+    // Run all tasks in parallel
+    const [visionTaskRes, codeTaskRes, lighthouseMetrics] = await Promise.all([
+      visionTask,
+      codeTask,
+      lighthouseTask
+    ]);
 
     if (!visionTaskRes && !lighthouseMetrics && !backendMetrics) {
       return {
         issues: [],
         launchScore: 0,
         verdict: "broken",
-        summary: "All analysis engines failed. The AI provider is unavailable, Lighthouse could not reach the URL (is it a localhost link?), and no GitHub code was provided.",
+        summary: "All analysis engines failed or timed out. This can happen if the AI provider is overloaded or the URL is not publicly accessible.",
         improvementPrompt: "N/A",
         analysisMode: "failed",
         provider: "None",
-        warning: "CRITICAL FAILURE: No analysis data could be generated. Please check your API keys and ensure your website is publicly accessible."
+        warning: "CRITICAL FAILURE: No analysis data could be generated. Please check your API keys and network connectivity."
       };
     }
 
-    let visionResult: any = null;
-    let codeResult: any = null;
+    let visionResult: AuditResponse | null = null;
+    let codeResult: AuditResponse | null = null;
 
     if (visionTaskRes && visionTaskRes.text) {
       try {
-        const visionMatch = visionTaskRes.text.match(/\{[\s\S]*\}/);
-        if (visionMatch?.[0]) {
-          visionResult = JSON.parse(visionMatch[0]);
-        }
+        visionResult = parseJsonFromText(visionTaskRes.text);
       } catch (e) {
         console.warn("Failed to parse vision result", e);
       }
     }
 
-    if (codeTaskRes) {
+    if (codeTaskRes && codeTaskRes.text) {
       try {
-        const codeMatch = codeTaskRes.text.match(/\{[\s\S]*\}/);
-        if (codeMatch?.[0]) {
-          codeResult = JSON.parse(codeMatch[0]);
-        }
+        codeResult = parseJsonFromText(codeTaskRes.text);
       } catch {
         codeResult = null;
       }
@@ -222,39 +233,142 @@ OUTPUT (JSON)
     return this.mergeResults(visionResult, codeResult, lighthouseMetrics, backendMetrics, visionProvider.name, codeProvider?.name);
   }
 
-  private static mergeResults(vision: any, code: any, lighthouse: any, backendMetrics: any, visionName: string, codeName?: string): any {
+  private static mergeResults(
+    vision: AuditResponse | null,
+    code: AuditResponse | null,
+    lighthouse: LighthouseMetrics | null,
+    backendMetrics: BackendMetrics | null,
+    visionName: string,
+    codeName?: string
+  ): AuditResponse {
+    const usedTools: string[] = [];
+    if (lighthouse) usedTools.push("Lighthouse (PageSpeed Insights)");
+    if (backendMetrics) usedTools.push("Static Analyzer (Security, Code Quality, Maintainability)");
+    if (vision) usedTools.push(`${visionName} (AI Vision Analysis)`);
+    if (code) usedTools.push(`${codeName || "AI"} (AI Code Analysis)`);
+
     // Graceful Fallback: If AI completely failed
-    if (!vision) {
+    if (!vision && !code) {
+      const fallbackFrontendScore = lighthouse
+        ? Math.round((lighthouse.performance + lighthouse.accessibility + lighthouse.bestPractices + lighthouse.seo) / 4)
+        : 0;
+      const fallbackBackendScore = backendMetrics
+        ? Math.round((backendMetrics.security + backendMetrics.codeQuality + backendMetrics.maintainability) / 3)
+        : 0;
+      const fallbackLaunchScore = Math.round((fallbackFrontendScore + fallbackBackendScore) / 2);
+
+      const toolNote = usedTools.length > 0
+        ? `This report was generated using: ${usedTools.join(", ")}.`
+        : "No analysis tools were available.";
+
+      // Generate issues from Lighthouse if AI failed
+      const fallbackIssues: any[] = [];
+      if (lighthouse) {
+        if (lighthouse.performance < 70) {
+          fallbackIssues.push({
+            category: "performance",
+            title: "Low Performance Score",
+            severity: lighthouse.performance < 40 ? "high" : "medium",
+            description: `The page performance is ${lighthouse.performance}/100, which can hurt user retention.`,
+            fixPrompt: "Optimize image sizes, enable compression, and reduce unused JavaScript.",
+            evidence: `Lighthouse Performance Score: ${lighthouse.performance}`,
+            confidence: "high"
+          });
+        }
+        if (lighthouse.accessibility < 90) {
+          fallbackIssues.push({
+            category: "accessibility",
+            title: "Accessibility Improvements Needed",
+            severity: "medium",
+            description: `Accessibility score is ${lighthouse.accessibility}/100. Some users may face difficulty navigating.`,
+            fixPrompt: "Check for color contrast, add missing labels to form elements, and ensure keyboard navigability.",
+            evidence: `Lighthouse Accessibility Score: ${lighthouse.accessibility}`,
+            confidence: "high"
+          });
+        }
+      }
+
+      // Generate issues from Static Analysis if AI failed
+      if (backendMetrics) {
+        if (backendMetrics.security < 80) {
+          fallbackIssues.push({
+            category: "security",
+            title: "Security Risks Detected",
+            severity: "high",
+            description: `Static analysis detected potential security vulnerabilities (Score: ${backendMetrics.security}/100).`,
+            fixPrompt: "Review code for hardcoded secrets, dangerous functions like eval(), and ensure all inputs are validated.",
+            evidence: "Deterministic regex scan of repository code.",
+            confidence: "high"
+          });
+        }
+        if (backendMetrics.codeQuality < 70) {
+          fallbackIssues.push({
+            category: "architecture",
+            title: "Code Quality & Patterns",
+            severity: "medium",
+            description: `Backend code quality is rated at ${backendMetrics.codeQuality}/100.`,
+            fixPrompt: "Remove excessive console logs, use proper TypeScript types (avoid 'any'), and add try/catch blocks to async operations.",
+            evidence: "Pattern-based analysis of codebase structure.",
+            confidence: "medium"
+          });
+        }
+      }
+
       return {
-        issues: [],
-        launchScore: 0,
-        verdict: "needs-fixes",
-        summary: "AI Analysis failed to generate a report, but deterministic metrics are available.",
-        improvementPrompt: "N/A",
+        issues: fallbackIssues,
+        launchScore: fallbackLaunchScore,
+        frontendScore: fallbackFrontendScore,
+        backendScore: fallbackBackendScore,
+        verdict: fallbackLaunchScore >= 70 ? "needs-fixes" : "broken",
+        summary: `AI Analysis unavailable (quota limit reached). ${toolNote} We've generated a report based on Lighthouse and Static Code Analysis.`,
+        improvementPrompt: `Frontend Improvements (based on Lighthouse):\n${
+          lighthouse
+            ? `Improve performance (current: ${lighthouse.performance}/100), accessibility (${lighthouse.accessibility}/100), best practices (${lighthouse.bestPractices}/100), and SEO (${lighthouse.seo}/100).`
+            : "No frontend metrics available."
+        }\n\nBackend Improvements (based on Static Analyzer):\n${
+          backendMetrics
+            ? `Address security issues (score: ${backendMetrics.security}/100), code quality (${backendMetrics.codeQuality}/100), and maintainability (${backendMetrics.maintainability}/100).`
+            : "No backend metrics available."
+        }`,
         analysisMode: "fallback-deterministic",
-        provider: "Lighthouse + Static Analyzer",
+        provider: usedTools.join(" + ") || "None",
         lighthouse: lighthouse || undefined,
         backendMetrics: backendMetrics || undefined,
-        warning: "AI provider failed or timed out. Showing deterministic metrics only."
+        warning: "AI Analysis unavailable. Showing findings from Lighthouse and Static Analysis tools.",
       };
     }
 
-    const allIssues = [...(vision.issues || [])];
-    if (code && code.issues) allIssues.push(...code.issues);
+    // AI was used for at least one part
+    // Use mergeIssues to deduplicate between vision and code issues
+    const allIssues = mergeIssues(vision?.issues || [], code?.issues || []);
 
-    const finalScore = Math.round((vision.launchScore + (code?.launchScore || vision.launchScore)) / 2);
+    const frontendScore = vision?.launchScore ?? (lighthouse ? Math.round((lighthouse.performance + lighthouse.accessibility + lighthouse.bestPractices + lighthouse.seo) / 4) : 0);
+    const backendScore = code?.launchScore ?? (backendMetrics ? Math.round((backendMetrics.security + backendMetrics.codeQuality + backendMetrics.maintainability) / 3) : 0);
+    const finalScore = Math.round((frontendScore + backendScore) / 2);
+
+    let summaryText = "";
+    if (vision && code) {
+      summaryText = `${vision.summary} ${code.summary}`;
+    } else if (vision) {
+      summaryText = vision.summary;
+    } else if (code) {
+      summaryText = code.summary;
+    }
+    summaryText += " Since AI was used, this report includes more precise and contextual results.";
+
+    const toolNote = `Analysis performed using: ${usedTools.join(", ")}.`;
 
     return {
-      thoughtProcess: [...(vision.thoughtProcess || []), ...(code?.thoughtProcess || [])],
-      summary: code ? `${vision.summary} ${code.summary}` : vision.summary,
+      thoughtProcess: [...(vision?.thoughtProcess || []), ...(code?.thoughtProcess || [])],
+      summary: `${summaryText} ${toolNote}`,
       issues: allIssues,
       launchScore: finalScore,
-      verdict: vision.verdict, // Use frontend verdict as base
-      improvementPrompt: code
-        ? `Frontend:\n${vision.improvementPrompt}\n\nBackend:\n${code.improvementPrompt}`
-        : vision.improvementPrompt,
-      analysisMode: "ai-split",
-      provider: code ? `${visionName} + ${codeName}` : visionName,
+      frontendScore,
+      backendScore,
+      verdict: (vision?.verdict || code?.verdict || "needs-fixes") as AuditResponse["verdict"],
+      improvementPrompt: `Frontend:\n${vision?.improvementPrompt || "N/A (Lighthouse metrics: " + (lighthouse ? `Performance ${lighthouse.performance}, Accessibility ${lighthouse.accessibility}, Best Practices ${lighthouse.bestPractices}, SEO ${lighthouse.seo}` : "N/A") + ")"}\n\nBackend:\n${code?.improvementPrompt || "N/A (Static Analyzer scores: " + (backendMetrics ? `Security ${backendMetrics.security}, Code Quality ${backendMetrics.codeQuality}, Maintainability ${backendMetrics.maintainability}` : "N/A") + ")"}`,
+      analysisMode: vision && code ? "ai-split" : "ai-partial",
+      provider: usedTools.join(" + "),
       lighthouse: lighthouse || undefined,
       backendMetrics: backendMetrics || undefined,
     };

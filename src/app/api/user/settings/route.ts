@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { getUserSettings, saveUserSettings } from "@/lib/audits";
+import { saveUserSettings, ensureUserSettingsTable } from "@/lib/audits";
 import { z } from "zod";
 
 const settingsSchema = z.object({
@@ -17,15 +17,34 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const settings = await getUserSettings(userId);
+    const db = await ensureUserSettingsTable();
     
-    // Do NOT send the raw API keys back to the client! 
-    // Just send a boolean indicating if they are set.
+    if (!db) {
+      return NextResponse.json({
+        visionProvider: "default",
+        hasVisionKey: false,
+        codeProvider: "default",
+        hasCodeKey: false,
+      });
+    }
+
+    const rows = await db`
+      SELECT vision_provider, vision_api_key_encrypted, code_provider, code_api_key_encrypted 
+      FROM user_settings 
+      WHERE user_id = ${userId}
+    ` as Array<{
+      vision_provider: string;
+      vision_api_key_encrypted: string | null;
+      code_provider: string;
+      code_api_key_encrypted: string | null;
+    }>;
+
+    const row = rows[0];
     return NextResponse.json({
-      visionProvider: settings?.visionProvider || "default",
-      hasVisionKey: !!settings?.visionKey,
-      codeProvider: settings?.codeProvider || "default",
-      hasCodeKey: !!settings?.codeKey,
+      visionProvider: row?.vision_provider || "default",
+      hasVisionKey: !!row?.vision_api_key_encrypted,
+      codeProvider: row?.code_provider || "default",
+      hasCodeKey: !!row?.code_api_key_encrypted,
     });
   } catch (error) {
     console.error("Error fetching user settings:", error);
@@ -66,7 +85,7 @@ if (visionKey !== undefined && visionKey !== null && visionKey !== "") {
     }
 
     await saveUserSettings(userId, Object.fromEntries(
-      Object.entries(updateData).filter(([_, v]) => v !== undefined)
+      Object.entries(updateData).filter(([, v]) => v !== undefined)
     ));
 
     return NextResponse.json({ success: true });

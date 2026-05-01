@@ -44,47 +44,44 @@ export async function checkRateLimitAsync(
   const ip = getClientIP(request);
   const now = Date.now();
   const db = await ensureRateLimitTable();
-  
+
   if (!db) {
     return { success: true, remaining: config.maxRequests, resetIn: config.windowMs };
   }
-  
-  const rows = await db`
-    SELECT count, reset_time FROM rate_limits WHERE ip = ${ip}
+
+  // Atomic upsert: handles race conditions by using INSERT...ON CONFLICT
+  const result = await db`
+    WITH upsert AS (
+      INSERT INTO rate_limits (ip, count, reset_time)
+      VALUES (${ip}, 1, ${now + config.windowMs})
+      ON CONFLICT (ip) DO UPDATE SET
+        count = CASE
+          WHEN rate_limits.reset_time < ${now} THEN 1
+          ELSE rate_limits.count + 1
+        END,
+        reset_time = CASE
+          WHEN rate_limits.reset_time < ${now} THEN ${now + config.windowMs}
+          ELSE rate_limits.reset_time
+        END
+      RETURNING count, reset_time
+    )
+    SELECT count, reset_time FROM upsert
   ` as Array<{ count: number; reset_time: bigint }>;
-  
-  if (rows.length === 0) {
-    await db`
-      INSERT INTO rate_limits (ip, count, reset_time) VALUES (${ip}, 1, ${now + config.windowMs})
-    `;
-    return { success: true, remaining: config.maxRequests - 1, resetIn: config.windowMs };
-  }
-  
-  const row = rows[0];
+
+  const row = result[0];
   const resetTime = Number(row.reset_time);
-  
-  if (resetTime < now) {
-    await db`
-      UPDATE rate_limits SET count = 1, reset_time = ${now + config.windowMs} WHERE ip = ${ip}
-    `;
-    return { success: true, remaining: config.maxRequests - 1, resetIn: config.windowMs };
-  }
-  
-  if (row.count >= config.maxRequests) {
+
+  if (row.count > config.maxRequests) {
     return {
       success: false,
       remaining: 0,
       resetIn: resetTime - now,
     };
   }
-  
-  await db`
-    UPDATE rate_limits SET count = count + 1 WHERE ip = ${ip}
-  `;
-  
+
   return {
     success: true,
-    remaining: config.maxRequests - row.count - 1,
+    remaining: config.maxRequests - row.count,
     resetIn: resetTime - now,
   };
 }

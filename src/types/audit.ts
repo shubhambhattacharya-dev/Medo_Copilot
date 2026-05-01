@@ -90,6 +90,8 @@ export type BackendMetrics = {
 };
 
 export type AuditResponse = z.infer<typeof ResultSchema> & {
+  frontendScore?: number;
+  backendScore?: number;
   analysisMode?: string;
   provider?: string;
   lighthouse?: LighthouseMetrics;

@@ -9,7 +9,6 @@ export interface AiProvider {
   name: string;
   model: LanguageModel;
   supportsSchema: boolean;
-  isVision: boolean;
   supportsVision: boolean;
 }
 
@@ -27,7 +26,6 @@ export class AiService {
           name: "gemini",
           model: customGoogle(process.env.GOOGLE_GENERATIVE_AI_MODEL || "gemini-2.0-flash"),
           supportsSchema: true,
-          isVision: true,
           supportsVision: true
         };
       } 
@@ -40,7 +38,6 @@ export class AiService {
           name: "groq",
           model: customGroq(process.env.GROQ_MODEL || "llama-3.2-90b-vision-preview"),
           supportsSchema: false,
-          isVision: true,
           supportsVision: true
         };
       } 
@@ -53,7 +50,6 @@ export class AiService {
           name: "openrouter",
           model: customOpenRouter("anthropic/claude-3.5-sonnet"),
           supportsSchema: false,
-          isVision: true,
           supportsVision: true
         };
       }
@@ -66,17 +62,34 @@ export class AiService {
   /**
    * Resolves the best available vision model based on user settings and defaults
    */
-  static getVisionModel(provider?: string, key?: string | null): AiProvider {
-    const model = provider ? this.getProviderModel(provider, key || null) : null;
-    return model || this.getProviderModel("gemini", null) || this.getProviderModel("groq", null)!;
+  static getVisionModel(provider?: string, key?: string | null): AiProvider | null {
+    // 1. Try specified provider if valid
+    if (provider) {
+      const p = this.getProviderModel(provider, key || null);
+      if (p) return p;
+    }
+
+    // 2. Default Order: Gemini (Best Vision) -> Groq (Good Vision) -> OpenRouter
+    return (
+      this.getProviderModel("gemini", null) || 
+      this.getProviderModel("groq", null)
+    );
   }
 
   /**
    * Resolves the best available code/logic model
    */
-  static getCodeModel(provider?: string, key?: string | null): AiProvider {
-    const model = provider ? this.getProviderModel(provider, key || null) : null;
-    // For code, we prefer Groq or Gemini if no custom key provided
-    return model || this.getProviderModel("groq", null) || this.getProviderModel("gemini", null)!;
+  static getCodeModel(provider?: string, key?: string | null): AiProvider | null {
+    // 1. Try specified provider if valid
+    if (provider) {
+      const p = this.getProviderModel(provider, key || null);
+      if (p) return p;
+    }
+
+    // 2. Default Order: Groq (Fastest) -> Gemini (Reliable)
+    return (
+      this.getProviderModel("groq", null) || 
+      this.getProviderModel("gemini", null)
+    );
   }
 }

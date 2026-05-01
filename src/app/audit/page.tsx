@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ScoreGauge } from "@/components/score-gauge";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { FRONTEND_CATEGORIES } from "@/types/audit";
 import type { AuditIssue, LighthouseMetrics, BackendMetrics } from "@/types/audit";
 import {
   ArrowLeft,
+  AlertCircle,
   AlertTriangle,
   CheckCircle2,
   ChevronDown,
@@ -42,6 +43,8 @@ import { escapeHtml } from "@/lib/utils";
 // ─── Types ────────────────────────────────────────────
 type AuditResult = {
   launchScore: number;
+  frontendScore?: number;
+  backendScore?: number;
   issues: AuditIssue[];
   error?: string;
   analysisMode?: string;
@@ -170,21 +173,45 @@ function ErrorState({ error }: { error: string }) {
 export default function AuditPage() {
   const router = useRouter();
 
-  // Use useState lazy initializer to avoid hydration mismatch
-  const [initialData] = useState(() => {
-    if (typeof window === "undefined") return { status: "loading" as const, result: null as AuditResult | null, errorMsg: "" };
-    try {
-      const raw = localStorage.getItem("medo_audit_result");
-      if (!raw) return { status: "empty" as const, result: null as AuditResult | null, errorMsg: "" };
-      const parsed: AuditResult = JSON.parse(raw);
-      if (parsed.error && !parsed.issues?.length) return { status: "error" as const, result: null as AuditResult | null, errorMsg: parsed.error };
-      return { status: "ready" as const, result: parsed, errorMsg: "" };
-    } catch {
-      return { status: "error" as const, result: null as AuditResult | null, errorMsg: "Could not load audit data. The stored result may be corrupted." };
-    }
-  });
+  const [data, setData] = useState<{
+    status: "loading" | "empty" | "ready" | "error";
+    result: AuditResult | null;
+    errorMsg: string;
+  }>({ status: "loading", result: null, errorMsg: "" });
+  
+  const [currentDate, setCurrentDate] = useState("");
+  const [mounted, setMounted] = useState(false);
 
-  const { status, result, errorMsg } = initialData;
+  useEffect(() => {
+    setMounted(true);
+    setCurrentDate(new Date().toLocaleDateString());
+
+    try {
+      // Check localStorage first, then fallback to sessionStorage
+      let raw = localStorage.getItem("medo_audit_result");
+      if (!raw && typeof sessionStorage !== "undefined") {
+        raw = sessionStorage.getItem("medo_audit_result");
+      }
+
+      if (!raw) {
+        setData({ status: "empty", result: null, errorMsg: "" });
+        return;
+      }
+      const parsed: AuditResult = JSON.parse(raw);
+
+      // If we have issues or a score, it's a valid (maybe partial) result
+      if (parsed.issues?.length > 0 || parsed.launchScore > 0) {
+        setData({ status: "ready", result: parsed, errorMsg: "" });
+      } else if (parsed.error) {
+        setData({ status: "error", result: null, errorMsg: parsed.error });
+      } else {
+        setData({ status: "empty", result: null, errorMsg: "" });
+      }
+    } catch {
+      setData({ status: "error", result: null, errorMsg: "Could not load audit data." });
+    }
+  }, []);
+  const { status, result, errorMsg } = data;
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const [expandedIssue, setExpandedIssue] = useState<number | null>(null);
 
@@ -236,7 +263,19 @@ export default function AuditPage() {
 
         {/* ── Score Hero ── */}
         <section className="mt-12 flex flex-col items-center gap-8">
-          <ScoreGauge score={result.launchScore} size={220} strokeWidth={14} />
+          <div className="flex flex-wrap justify-center gap-12 sm:gap-24">
+            <div className="flex flex-col items-center gap-4">
+              <h3 className="text-xs font-bold tracking-widest text-muted-foreground uppercase">Frontend Score</h3>
+              <ScoreGauge score={result.frontendScore ?? result.launchScore} size={160} strokeWidth={12} />
+            </div>
+            
+            {(result.backendScore !== undefined || result.backendMetrics) ? (
+              <div className="flex flex-col items-center gap-4">
+                <h3 className="text-xs font-bold tracking-widest text-muted-foreground uppercase">Backend Score</h3>
+                <ScoreGauge score={result.backendScore ?? result.launchScore} size={160} strokeWidth={12} />
+              </div>
+            ) : null}
+          </div>
 
           <div className="flex flex-col items-center gap-4">
             <span className={`inline-flex items-center gap-2 rounded-full ${verdictColor.bg} ${verdictColor.border} border px-5 py-2 text-sm font-bold ${verdictColor.text}`}>
@@ -263,7 +302,7 @@ export default function AuditPage() {
               </a>
             )}
             <span className="inline-flex items-center gap-1.5 rounded-full border border-border/40 bg-muted/30 px-3.5 py-1.5 text-[11px] font-medium text-muted-foreground backdrop-blur-sm">
-              <Clock className="h-3 w-3" /> {new Date().toLocaleDateString()}
+              <Clock className="h-3 w-3" /> {currentDate || "..."}
             </span>
           </div>
 
@@ -312,6 +351,43 @@ export default function AuditPage() {
                     </p>
                   ))}
                 </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ── Methodology Pros/Cons ── */}
+        <section className="mt-8 grid gap-4 sm:grid-cols-2">
+          <div className="rounded-2xl border border-cyan-500/10 bg-cyan-500/[0.02] p-6 backdrop-blur-sm">
+            <div className="flex items-center gap-2 mb-4">
+              <Sparkles className="h-4 w-4 text-cyan-400" />
+              <h3 className="text-sm font-bold text-cyan-300 uppercase tracking-wider">AI-Powered Analysis</h3>
+            </div>
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <p className="text-[11px] font-bold text-emerald-400 uppercase tracking-tighter">Pros</p>
+                <p className="text-xs text-muted-foreground leading-5">Deep UX understanding, visual hierarchy analysis, conversion copywriting suggestions, and creative fix prompts.</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[11px] font-bold text-red-400 uppercase tracking-tighter">Cons</p>
+                <p className="text-xs text-muted-foreground leading-5">Subject to API quota limits, slower inference, and rare "hallucinations" (seeing things that aren't there).</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-violet-500/10 bg-violet-500/[0.02] p-6 backdrop-blur-sm">
+            <div className="flex items-center gap-2 mb-4">
+              <Gauge className="h-4 w-4 text-violet-400" />
+              <h3 className="text-sm font-bold text-violet-300 uppercase tracking-wider">Tool-Based Analysis</h3>
+            </div>
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <p className="text-[11px] font-bold text-emerald-400 uppercase tracking-tighter">Pros</p>
+                <p className="text-xs text-muted-foreground leading-5">100% reliable, objective metrics (Lighthouse), precise security scanning, and no quota limits.</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[11px] font-bold text-red-400 uppercase tracking-tighter">Cons</p>
+                <p className="text-xs text-muted-foreground leading-5">Cannot judge "vibe" or design quality, lacks context on user intent, and limited to predefined rules.</p>
               </div>
             </div>
           </div>
@@ -396,96 +472,116 @@ export default function AuditPage() {
           </section>
         )}
 
-        {/* ── Issue Card Component ── */}
-        {(() => {
-          const feIssues = sortedIssues.filter(i => FRONTEND_CATEGORIES.has(i.category));
-          const beIssues = sortedIssues.filter(i => !FRONTEND_CATEGORIES.has(i.category));
+        {/* ── Issues List ── */}
+        <section className="mt-20">
+          {sortedIssues.length > 0 ? (
+            (() => {
+              const feIssues = sortedIssues.filter(i => FRONTEND_CATEGORIES.has(i.category));
+              const beIssues = sortedIssues.filter(i => !FRONTEND_CATEGORIES.has(i.category));
 
-          const renderIssueCard = (issue: typeof sortedIssues[0], idx: number, globalIdx: number) => {
-            const sev = severityConfig[issue.severity];
-            const isExpanded = expandedIssue === globalIdx;
-            return (
-              <div key={`${issue.title}-${globalIdx}`} className="group relative overflow-hidden rounded-2xl border border-border/50 bg-background/60 backdrop-blur-xl transition-all duration-300 hover:border-border/80 hover:shadow-xl hover:shadow-black/[0.08]">
-                <div className={`absolute left-0 top-0 h-full w-1 ${sev.dot}`} />
-                <div className="p-5 pl-6">
-                  <div className="flex items-start gap-3">
-                    <div className={`rounded-xl ${sev.bg} p-2`}><CategoryIcon category={issue.category} /></div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-2">
-                        <h3 className="text-sm font-bold leading-snug">{issue.title}</h3>
-                        <span className={`shrink-0 rounded-md ${sev.bg} px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${sev.text}`}>{sev.label}</span>
+              const renderIssueCard = (issue: typeof sortedIssues[0], globalIdx: number) => {
+                const sev = severityConfig[issue.severity];
+                const isExpanded = expandedIssue === globalIdx;
+                return (
+                  <div key={`${issue.title}-${globalIdx}`} className="group relative overflow-hidden rounded-2xl border border-border/50 bg-background/60 backdrop-blur-xl transition-all duration-300 hover:border-border/80 hover:shadow-xl hover:shadow-black/[0.08]">
+                    <div className={`absolute left-0 top-0 h-full w-1 ${sev.dot}`} />
+                    <div className="p-5 pl-6">
+                      <div className="flex items-start gap-3">
+                        <div className={`rounded-xl ${sev.bg} p-2`}><CategoryIcon category={issue.category} /></div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between gap-2">
+                            <h3 className="text-sm font-bold leading-snug">{issue.title}</h3>
+                            <span className={`shrink-0 rounded-md ${sev.bg} px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${sev.text}`}>{sev.label}</span>
+                          </div>
+                          {issue.category && <span className="mt-1 inline-block rounded-md bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">{categoryLabel(issue.category)}</span>}
+                        </div>
                       </div>
-                      {issue.category && <span className="mt-1 inline-block rounded-md bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">{categoryLabel(issue.category)}</span>}
+                      <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{issue.description}</p>
+                      {(issue.evidence || issue.confidence) && (
+                        <button onClick={() => setExpandedIssue(isExpanded ? null : globalIdx)} className="mt-2.5 inline-flex items-center gap-1 text-[11px] font-medium text-cyan-400 transition-colors hover:text-cyan-300">
+                          {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                          {isExpanded ? "Hide details" : "Show evidence"}
+                        </button>
+                      )}
+                      {isExpanded && (
+                        <div className="mt-2 space-y-1.5 rounded-xl border border-border/30 bg-muted/20 p-3.5 text-[11px] leading-5 text-muted-foreground">
+                          {issue.evidence && <p><strong className="text-foreground/70">Evidence:</strong> {issue.evidence}</p>}
+                          {issue.confidence && <p><strong className="text-foreground/70">Confidence:</strong> <span className={issue.confidence === "high" ? "text-emerald-400" : issue.confidence === "medium" ? "text-amber-400" : "text-blue-400"}>{issue.confidence}</span></p>}
+                        </div>
+                      )}
+                      <button onClick={() => copyText(issue.fixPrompt, "Fix prompt")} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-border/40 bg-muted/20 py-2.5 text-xs font-semibold text-muted-foreground transition-all hover:border-cyan-500/30 hover:bg-cyan-500/5 hover:text-cyan-400">
+                        <Copy className="h-3.5 w-3.5" /> Copy Fix Prompt
+                      </button>
                     </div>
                   </div>
-                  <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{issue.description}</p>
-                  {(issue.evidence || issue.confidence) && (
-                    <button onClick={() => setExpandedIssue(isExpanded ? null : globalIdx)} className="mt-2.5 inline-flex items-center gap-1 text-[11px] font-medium text-cyan-400 transition-colors hover:text-cyan-300">
-                      {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                      {isExpanded ? "Hide details" : "Show evidence"}
-                    </button>
-                  )}
-                  {isExpanded && (
-                    <div className="mt-2 space-y-1.5 rounded-xl border border-border/30 bg-muted/20 p-3.5 text-[11px] leading-5 text-muted-foreground">
-                      {issue.evidence && <p><strong className="text-foreground/70">Evidence:</strong> {issue.evidence}</p>}
-                      {issue.confidence && <p><strong className="text-foreground/70">Confidence:</strong> <span className={issue.confidence === "high" ? "text-emerald-400" : issue.confidence === "medium" ? "text-amber-400" : "text-blue-400"}>{issue.confidence}</span></p>}
+                );
+              };
+
+              return (
+                <div className="space-y-16">
+                  {/* Frontend Issues */}
+                  <div>
+                    <div className="mb-6 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="rounded-xl bg-cyan-500/10 p-2.5">
+                          <LayoutPanelLeft className="h-5 w-5 text-cyan-400" />
+                        </div>
+                        <div>
+                          <h2 className="text-xl font-bold tracking-tight">Frontend Audit</h2>
+                          <p className="text-sm text-muted-foreground">UX, UI, and Conversion issues found</p>
+                        </div>
+                      </div>
+                      <span className="rounded-full bg-muted/40 px-3 py-1 text-xs font-bold text-muted-foreground">{feIssues.length} issues</span>
+                    </div>
+                    {feIssues.length > 0 ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                        {feIssues.map((issue, idx) => renderIssueCard(issue, idx))}
+                      </div>
+                    ) : (
+                      <div className="rounded-3xl border border-emerald-500/10 bg-emerald-500/[0.03] p-10 text-center backdrop-blur-sm">
+                        <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-500/40" />
+                        <p className="mt-4 text-sm font-medium text-emerald-400/80">No frontend issues found. Your UX is solid!</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Backend Issues */}
+                  {(beIssues.length > 0 || result.backendMetrics) && (
+                    <div>
+                      <div className="mb-6 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="rounded-xl bg-violet-500/10 p-2.5">
+                            <Server className="h-5 w-5 text-violet-400" />
+                          </div>
+                          <div>
+                            <h2 className="text-xl font-bold tracking-tight">Backend Audit</h2>
+                            <p className="text-sm text-muted-foreground">Security, Quality, and Architecture findings</p>
+                          </div>
+                        </div>
+                        <span className="rounded-full bg-muted/40 px-3 py-1 text-xs font-bold text-muted-foreground">{beIssues.length} issues</span>
+                      </div>
+                      {beIssues.length > 0 ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                          {beIssues.map((issue, idx) => renderIssueCard(issue, feIssues.length + idx))}
+                        </div>
+                      ) : (
+                        <div className="rounded-3xl border border-emerald-500/10 bg-emerald-500/[0.03] p-10 text-center backdrop-blur-sm">
+                          <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-500/40" />
+                          <p className="mt-4 text-sm font-medium text-emerald-400/80">No critical backend code issues found.</p>
+                        </div>
+                      )}
                     </div>
                   )}
-                  <button onClick={() => copyText(issue.fixPrompt, "Fix prompt")} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-border/40 bg-muted/20 py-2.5 text-xs font-semibold text-muted-foreground transition-all hover:border-cyan-500/30 hover:bg-cyan-500/5 hover:text-cyan-400">
-                    <Copy className="h-3.5 w-3.5" /> Copy Fix Prompt
-                  </button>
                 </div>
-              </div>
-            );
-          };
-
-          return (
-            <>
-              {/* ── Frontend Audit Section ── */}
-              {feIssues.length > 0 && (
-                <section className="mt-14">
-                  <div className="flex items-center gap-3">
-                    <div className="rounded-xl bg-gradient-to-br from-cyan-500/15 to-blue-500/10 p-2.5"><LayoutPanelLeft className="h-5 w-5 text-cyan-400" /></div>
-                    <div>
-                      <h2 className="text-lg font-bold tracking-tight">Frontend Audit</h2>
-                      <p className="text-xs text-muted-foreground">UX, copy, trust signals, CTA, mobile, accessibility</p>
-                    </div>
-                    <span className="ml-auto rounded-full bg-cyan-500/10 px-3 py-1 text-xs font-bold text-cyan-400">{feIssues.length} issues</span>
-                  </div>
-                  <div className="mt-6 grid gap-4 sm:grid-cols-2">
-                    {feIssues.map((issue, idx) => renderIssueCard(issue, idx, idx))}
-                  </div>
-                </section>
-              )}
-
-              {/* ── Backend Audit Section ── */}
-              {beIssues.length > 0 && (
-                <section className="mt-14">
-                  <div className="flex items-center gap-3">
-                    <div className="rounded-xl bg-gradient-to-br from-orange-500/15 to-red-500/10 p-2.5"><Server className="h-5 w-5 text-orange-400" /></div>
-                    <div>
-                      <h2 className="text-lg font-bold tracking-tight">Backend Audit</h2>
-                      <p className="text-xs text-muted-foreground">Security, architecture, database, error handling, code quality</p>
-                    </div>
-                    <span className="ml-auto rounded-full bg-orange-500/10 px-3 py-1 text-xs font-bold text-orange-400">{beIssues.length} issues</span>
-                  </div>
-                  <div className="mt-6 grid gap-4 sm:grid-cols-2">
-                    {beIssues.map((issue, idx) => renderIssueCard(issue, idx, feIssues.length + idx))}
-                  </div>
-                </section>
-              )}
-
-              {/* ── No issues ── */}
-              {feIssues.length === 0 && beIssues.length === 0 && (
-                <section className="mt-14 flex flex-col items-center gap-4 rounded-2xl border border-emerald-500/15 bg-emerald-500/[0.03] p-10 text-center">
-                  <CheckCircle2 className="h-10 w-10 text-emerald-400" />
-                  <h3 className="text-lg font-bold text-emerald-300">All Clear!</h3>
-                  <p className="text-sm text-muted-foreground">No significant issues found. Your app looks launch-ready.</p>
-                </section>
-              )}
-            </>
-          );
-        })()}
+              );
+            })()
+          ) : (
+            <div className="rounded-3xl border border-amber-500/10 bg-amber-500/[0.03] p-10 text-center backdrop-blur-sm">
+              <AlertCircle className="mx-auto h-10 w-10 text-amber-400/40" />
+              <p className="mt-4 text-sm font-medium text-amber-400/80">No issues found in this audit.</p>
+            </div>
+          )}
+        </section>
 
         {/* ── Improvement Prompt ── */}
         {result.improvementPrompt && (

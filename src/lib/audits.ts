@@ -13,6 +13,7 @@ type SaveAuditInput = {
   lighthouse?: unknown;
   backendMetrics?: unknown;
   warning?: string;
+  userId?: string;
 };
 
 let sql: ReturnType<typeof neon> | null = null;
@@ -39,6 +40,7 @@ async function ensureAuditTable() {
       improvement_prompt text,
       analysis_mode text,
       provider text,
+      user_id text,
       created_at timestamptz NOT NULL DEFAULT now()
     )
   `;
@@ -52,6 +54,9 @@ async function ensureAuditTable() {
       END IF;
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='audits' AND column_name='backend_metrics') THEN
         ALTER TABLE audits ADD COLUMN backend_metrics jsonb;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='audits' AND column_name='user_id') THEN
+        ALTER TABLE audits ADD COLUMN user_id text;
       END IF;
     END
     $$;
@@ -76,7 +81,8 @@ export async function saveAudit(input: SaveAuditInput) {
       analysis_mode,
       provider,
       lighthouse,
-      backend_metrics
+      backend_metrics,
+      user_id
     )
     VALUES (
       ${input.url},
@@ -88,12 +94,62 @@ export async function saveAudit(input: SaveAuditInput) {
       ${input.analysisMode ?? null},
       ${input.provider ?? null},
       ${input.lighthouse ? JSON.stringify(input.lighthouse) : null}::jsonb,
-      ${input.backendMetrics ? JSON.stringify(input.backendMetrics) : null}::jsonb
+      ${input.backendMetrics ? JSON.stringify(input.backendMetrics) : null}::jsonb,
+      ${input.userId ?? null}
     )
     RETURNING id
   `) as { id: string }[];
 
   return rows[0]?.id as string | null;
+}
+
+export async function getCachedAudit(url: string) {
+  const db = await ensureAuditTable();
+  if (!db) return null;
+
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+
+  const rows = (await db`
+    SELECT *
+    FROM audits
+    WHERE url = ${url}
+      AND created_at >= ${oneHourAgo.toISOString()}
+    ORDER BY created_at DESC
+    LIMIT 1
+  `) as Array<{
+    id: string;
+    url: string;
+    launch_score: number;
+    verdict: string | null;
+    summary: string | null;
+    issues: unknown;
+    improvement_prompt: string | null;
+    analysis_mode: string | null;
+    provider: string | null;
+    lighthouse: unknown;
+    backend_metrics: unknown;
+    user_id: string | null;
+    created_at: string;
+  }>;
+
+  if (!rows[0]) return null;
+
+  const row = rows[0];
+  return {
+    id: row.id,
+    url: row.url,
+    launchScore: row.launch_score,
+    verdict: row.verdict,
+    summary: row.summary,
+    issues: row.issues,
+    improvementPrompt: row.improvement_prompt,
+    analysisMode: row.analysis_mode,
+    provider: row.provider,
+    lighthouse: row.lighthouse,
+    backendMetrics: row.backend_metrics,
+    userId: row.user_id,
+    createdAt: row.created_at,
+  };
 }
 
 export async function ensureUserSettingsTable() {

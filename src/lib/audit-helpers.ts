@@ -5,12 +5,21 @@ import {
   type AuditIssue,
   type AuditVerdict,
   type AuditResponse,
+  type BackendMetrics,
+  type LighthouseMetrics,
+  FRONTEND_CATEGORIES,
   type PageSignals,
 } from "@/types/audit";
 
 // ============================================
 // PURE HELPER FUNCTIONS
 // ============================================
+
+export function normalizeAuditUrl(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return trimmed;
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
 
 function clampScore(score: number) {
   return Math.max(0, Math.min(100, Math.round(score)));
@@ -146,15 +155,88 @@ function buildRuleIssues(signals: PageSignals, reason?: string) {
     );
   }
 
-  if (!signals.title || signals.title.length < 8) {
+  // 1. Accessibility Checks
+  if (signals.imageCount > 0 && signals.imagesMissingAlt > 0) {
+    issues.push(
+      createIssue(
+        "accessibility",
+        "Images missing alt text",
+        "medium",
+        "Some images do not expose alternative text, which can hurt accessibility and context for assistive technology.",
+        "Add descriptive alt text for all meaningful images. Decorative images should have empty alt='' tags.",
+        `${signals.imagesMissingAlt} of ${signals.imageCount} image(s) are missing alt text.`,
+        "high"
+      )
+    );
+  }
+
+  // 2. Performance / Content Density
+  if (signals.contentLength < 300) {
+    issues.push(
+      createIssue(
+        "performance",
+        "Sparse page content",
+        "low",
+        "The page text is very thin, which can make the product feel under-explained and hurt SEO.",
+        "Add a clear 'How it Works' section and expand on the features of your application.",
+        `Extracted body text length: ${signals.contentLength} characters.`,
+        "high"
+      )
+    );
+  }
+
+  // 3. CTA & Conversion
+  if (signals.ctas.length === 0) {
+    issues.push(
+      createIssue(
+        "cta",
+        "Missing Call-to-Action (CTA)",
+        "high",
+        "No buttons or action links were detected above the fold.",
+        "Add a primary 'Get Started' or 'Demo' button clearly visible at the top of the page.",
+        "Found 0 button/link text labels in the initial HTML scan.",
+        "high"
+      )
+    );
+  } else if (!/(get started|sign up|join|try|demo|book|pricing|download|hire|start)/i.test(ctaText)) {
+    issues.push(
+      createIssue(
+        "cta",
+        "CTA phrasing is not actionable",
+        "medium",
+        "The detected links do not use strong conversion verbs.",
+        "Update your main buttons to use active verbs like 'Start for free', 'Book a demo', or 'Join the waitlist'.",
+        `Found CTAs: ${signals.ctas.slice(0, 3).join(", ")}`,
+        "medium"
+      )
+    );
+  }
+
+  // 4. Trust & Social Proof
+  if (!/(testimonial|review|trusted by|customers|users|clients|case study|proof|social proof)/i.test(normalized)) {
+    issues.push(
+      createIssue(
+        "trust",
+        "Missing social proof",
+        "medium",
+        "The page lacks testimonials, user counts, or brand logos that build credibility.",
+        "Add a 'Trusted By' logo strip or 2-3 customer testimonials near your primary CTA.",
+        "No keywords related to social proof (testimonials, reviews) detected in the page text.",
+        "medium"
+      )
+    );
+  }
+
+  // 5. Meta & SEO
+  if (!signals.title || signals.title.length < 5) {
     issues.push(
       createIssue(
         "copy",
-        "Weak page title",
+        "Missing or weak page title",
         "medium",
-        "The page title does not clearly communicate what the app does.",
-        "Rewrite the page title and hero headline to state the outcome, audience, and main value in one line.",
-        `Title length: ${signals.title.length}. Title: "${signals.title || "missing"}"`,
+        "The page title is too short or missing, which hurts click-through rates from search and social shares.",
+        "Update the <title> tag to clearly state the product name and its primary value proposition.",
+        `Title: "${signals.title || "Empty"}"`,
         "high"
       )
     );
@@ -166,91 +248,24 @@ function buildRuleIssues(signals: PageSignals, reason?: string) {
         "copy",
         "Missing meta description",
         "low",
-        "The page has no meta description, so search previews and shared links may not explain the product clearly.",
-        "Add a short meta description that explains who the app is for, what it does, and the main result users get.",
-        "No meta[name='description'] content found in the fetched HTML.",
+        "No meta description found. Search engines will show generic snippets which might not entice users.",
+        "Add a <meta name='description'> tag with a 150-160 character summary of your app's value.",
+        "Meta description tag is absent from the HTML.",
         "high"
       )
     );
   }
 
-  if (signals.ctas.length === 0) {
+  // 6. Mobile Readiness
+  if (!normalized.includes("viewport") || !normalized.includes("width=device-width")) {
     issues.push(
       createIssue(
-        "cta",
-        "No visible CTA found",
+        "mobile",
+        "Non-responsive viewport detected",
         "high",
-        "The fetched HTML did not expose a clear link or button action for visitors to take next.",
-        "Add one primary CTA above the fold and make secondary actions visually quieter.",
-        "Found 0 button/link text labels in the fetched HTML.",
-        "high"
-      )
-    );
-  } else if (!/(pricing|plan|trial|book|demo|get started|sign up|join waitlist|contact|download|hire|start|try)/i.test(ctaText)) {
-    issues.push(
-      createIssue(
-        "cta",
-        "CTA is not obvious",
-        "medium",
-        "The detected link/button labels do not include a strong conversion action.",
-        "Use one action-based primary CTA above the fold, such as 'Book a demo', 'Start free', 'Hire me', or 'View project'.",
-        `Detected CTA/link labels: ${ctaText.slice(0, 220)}`,
-        "high"
-      )
-    );
-  }
-
-  if (!/(testimonial|review|trusted|customers|users|case study|social proof|as seen|github|linkedin|client|worked with)/i.test(normalized)) {
-    issues.push(
-      createIssue(
-        "trust",
-        "Missing trust signals",
-        "medium",
-        "The visible content has little proof, credibility, or social validation.",
-        "Add testimonials, usage stats, recognizable logos, project links, GitHub/LinkedIn proof, or a short proof section close to the CTA.",
-        "No trust keywords such as testimonial, trusted, users, case study, GitHub, or LinkedIn were detected.",
-        "medium"
-      )
-    );
-  }
-
-  if (signals.contentLength < 300) {
-    issues.push(
-      createIssue(
-        "copy",
-        "Sparse page copy",
-        "low",
-        "The fetched page text is thin, which can make the product feel under-explained.",
-        "Add one sentence for the problem, one for the outcome, one for credibility, and one clear CTA line.",
-        `Extracted body text length: ${signals.contentLength} characters.`,
-        "high"
-      )
-    );
-  }
-
-  if (!/(empty state|no results|nothing here|try again|error state|loading|retry)/i.test(normalized)) {
-    issues.push(
-      createIssue(
-        "empty-state",
-        "Missing empty and error states",
-        "low",
-        "The visible content does not describe what users see while loading, when data is empty, or when something fails.",
-        "Add clear loading, empty, and error states with helpful text and one recovery action, such as retrying or going back.",
-        "No loading, empty-state, error-state, retry, or no-results copy detected in the fetched text.",
-        "medium"
-      )
-    );
-  }
-
-  if (signals.imageCount > 0 && signals.imagesMissingAlt > 0) {
-    issues.push(
-      createIssue(
-        "accessibility",
-        "Images missing alt text",
-        "medium",
-        "Some images do not expose alternative text, which can hurt accessibility and context for assistive technology.",
-        "Add descriptive alt text for meaningful images and empty alt text for decorative images.",
-        `${signals.imagesMissingAlt} of ${signals.imageCount} image(s) are missing alt text.`,
+        "The page may not scale correctly on mobile devices.",
+        "Add <meta name='viewport' content='width=device-width, initial-scale=1'> to your HTML <head>.",
+        "Missing standard mobile-responsive meta tag.",
         "high"
       )
     );
@@ -291,28 +306,42 @@ function buildMeasuredResult({
   url,
   title,
   issues,
+  backendMetrics,
+  lighthouse,
 }: {
   url: string;
   title: string;
   issues: AuditIssue[];
+  backendMetrics?: BackendMetrics | null;
+  lighthouse?: LighthouseMetrics | null;
 }) {
-  const launchScore = clampScore(
-    90 - issues.reduce((total, issue) => total + scorePenalty(issue), 0)
-  );
+  const frontendScore = lighthouse 
+    ? Math.round((lighthouse.performance + lighthouse.accessibility + lighthouse.bestPractices + lighthouse.seo) / 4)
+    : clampScore(90 - issues.filter(i => FRONTEND_CATEGORIES.has(i.category)).reduce((total, issue) => total + scorePenalty(issue), 0));
+
+  const backendScore = backendMetrics
+    ? Math.round((backendMetrics.security + backendMetrics.codeQuality + backendMetrics.maintainability) / 3)
+    : (issues.some(i => !FRONTEND_CATEGORIES.has(i.category)) ? 70 : 100);
+
+  const launchScore = Math.round((frontendScore + (backendMetrics ? backendScore : frontendScore)) / (backendMetrics ? 2 : 1));
   const verdict = getVerdict(launchScore, issues);
 
   return {
     launchScore,
+    frontendScore,
+    backendScore: backendMetrics ? backendScore : undefined,
     verdict,
     summary:
       verdict === "launch-ready"
-        ? "This app looks close to launch-ready based on the measured page signals."
+        ? "This app looks close to launch-ready based on deterministic page signals."
         : verdict === "broken"
-          ? "This app has high-priority issues backed by measurable page signals."
-          : "This app has a usable base, but measurable copy, trust, CTA, or accessibility issues should be fixed before launch.",
+          ? "This app has critical issues detected by our automated rule-engine."
+          : "This app has a solid base, but key UX/UI and trust signals need improvement before launch.",
     issues,
     improvementPrompt: buildImprovementPrompt({ url, title, issues }),
     analysisMode: "measured",
+    lighthouse: lighthouse || undefined,
+    backendMetrics: backendMetrics || undefined,
   };
 }
 

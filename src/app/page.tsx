@@ -2,81 +2,20 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { toast } from "sonner";
+import { UserButton, useUser } from "@clerk/nextjs";
+import { BarChart3, CheckCircle2, Sparkles, Copy, BadgeCheck, Settings } from "lucide-react";
+import { AuditForm } from "@/components/audit-form";
+import { checks, previewFixes, steps, loadingSteps } from "@/lib/constants";
+import { normalizeAuditUrl } from "@/lib/audit-helpers";
 import {
   Card,
   CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { ThemeToggle } from "@/components/theme-toggle";
-import { toast } from "sonner";
-import { ArrowRight, BadgeCheck, BarChart3, CheckCircle2, ChevronDown, Copy, Gauge, Key, LayoutPanelLeft, Loader2, Settings, ShieldCheck, Smartphone, Sparkles } from "lucide-react";
-
-const AI_PROVIDERS = [
-  { value: "default", label: "Default (Free Tier)", hint: "Uses server API keys" },
-  { value: "gemini", label: "Google Gemini", hint: "Best for vision + structured output" },
-  { value: "groq", label: "Groq (Llama)", hint: "Fastest inference speed" },
-  { value: "openrouter", label: "OpenRouter (Claude)", hint: "Requires your own API key" },
-];
-
-const checks = [
-  {
-    title: "Trust signals",
-    description: "Find missing proof, unclear pricing cues, and weak social trust.",
-    icon: ShieldCheck,
-  },
-  {
-    title: "Mobile clarity",
-    description: "Spot cramped layouts, tiny tap targets, and broken hierarchy.",
-    icon: Smartphone,
-  },
-  {
-    title: "Conversion friction",
-    description: "Catch distracting copy, unclear CTA flow, and noisy sections.",
-    icon: Gauge,
-  },
-];
-
-const previewFixes = [
-  "Add a stronger hero promise above the fold.",
-  "Move the primary CTA higher and reduce competing actions.",
-  "Show one concrete outcome instead of generic marketing copy.",
-];
-
-const steps = [
-  {
-    step: "01",
-    title: "Paste your MeDo URL",
-    description: "Drop in the page you want audited. No setup, no config.",
-  },
-  {
-    step: "02",
-    title: "Scan the UX",
-    description: "Medo Copilot checks the page for clarity, trust, and mobile issues.",
-  },
-  {
-    step: "03",
-    title: "Copy the fixes",
-    description: "Use short prompts and specific edits you can apply immediately.",
-  },
-];
-
-const loadingSteps = [
-  "Fetching page content...",
-  "Capturing screenshots...",
-  "Running AI analysis...",
-  "Checking trust signals...",
-  "Evaluating mobile layout...",
-  "Generating fix prompts...",
-];
-
-function normalizeAuditUrl(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return trimmed;
-  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-}
+import { Button } from "@/components/ui/button";
 
 export default function Home() {
   const router = useRouter();
@@ -85,7 +24,6 @@ export default function Home() {
   const [screenshots, setScreenshots] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState(0);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [visionProvider, setVisionProvider] = useState("default");
   const [visionKey, setVisionKey] = useState("");
   const [codeProvider, setCodeProvider] = useState("default");
@@ -94,6 +32,7 @@ export default function Home() {
   const [isSaving, setIsSaving] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const { isSignedIn } = useUser();
 
   // Fetch user settings on mount
   useEffect(() => {
@@ -133,13 +72,12 @@ export default function Home() {
       if (res.ok) {
         toast.success("API keys saved securely!");
         setKeysSaved(true);
-        // Clear input fields since they are saved safely in DB
         setVisionKey("");
         setCodeKey("");
       } else {
         toast.error("Failed to save settings");
       }
-    } catch (err) {
+    } catch {
       toast.error("Error saving settings");
     } finally {
       setIsSaving(false);
@@ -159,7 +97,6 @@ export default function Home() {
     setLoadingStep(0);
     setUrl(submittedUrl);
 
-    // Animate through loading steps
     if (intervalRef.current) clearInterval(intervalRef.current);
     intervalRef.current = setInterval(() => {
       setLoadingStep((prev) => {
@@ -168,7 +105,6 @@ export default function Home() {
       });
     }, 4000);
 
-    // Create abort controller for fetch cancellation
     abortRef.current = new AbortController();
 
     try {
@@ -177,11 +113,9 @@ export default function Home() {
       if (githubUrl.trim()) {
         formData.append("githubUrl", githubUrl.trim());
       }
-      // BYOK: send provider preferences (the backend will fetch keys from DB)
       formData.append("visionProvider", visionProvider);
       formData.append("codeProvider", codeProvider);
       
-      // Also send any un-saved keys in case they didn't click save
       if (visionKey.trim()) formData.append("visionKey", visionKey.trim());
       if (codeKey.trim()) formData.append("codeKey", codeKey.trim());
 
@@ -205,9 +139,15 @@ export default function Home() {
         throw new Error(data?.error || "Audit request failed.");
       }
 
-      // Store result and redirect to audit page
-      const storage = typeof sessionStorage !== "undefined" ? sessionStorage : localStorage;
-      storage.setItem(
+      // If AI failed but we have fallback data, warn the user
+      if (data.warning && (data.lighthouse || data.backendMetrics)) {
+        toast.warning("AI Quota exceeded. Using automated tools for report.", {
+          duration: 6000,
+          description: "Deterministic analysis is active, but visual AI audit was skipped.",
+        });
+      }
+
+      localStorage.setItem(
         "medo_audit_result",
         JSON.stringify({ ...data, auditedUrl: submittedUrl })
       );
@@ -218,9 +158,7 @@ export default function Home() {
         error instanceof Error ? error.message : "Unable to reach the audit API.";
       toast.error(errorMessage);
 
-      // Store error result and redirect
-      const storage = typeof sessionStorage !== "undefined" ? sessionStorage : localStorage;
-      storage.setItem(
+      localStorage.setItem(
         "medo_audit_result",
         JSON.stringify({
           launchScore: 0,
@@ -268,13 +206,18 @@ export default function Home() {
               Trusted by builders shipping faster
             </div>
             
-            <button
-              onClick={() => router.push("/settings")}
-              className="flex items-center gap-2 rounded-full border border-border/70 bg-muted/50 px-3 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <Settings className="h-3.5 w-3.5" />
-              <span>Settings</span>
-            </button>
+            {isSignedIn ? (
+              <>
+                <button
+                  onClick={() => router.push("/settings")}
+                  className="flex items-center gap-2 rounded-full border border-border/70 bg-muted/50 px-3 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <Settings className="h-3.5 w-3.5" />
+                  <span>Settings</span>
+                </button>
+                <UserButton />
+              </>
+            ) : null}
             
             <ThemeToggle />
           </div>
@@ -316,232 +259,31 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="mt-8 rounded-3xl border border-border/70 bg-background/80 p-4 shadow-[0_24px_80px_-40px_rgba(0,0,0,0.45)] backdrop-blur sm:p-5">
-              <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                <LayoutPanelLeft className="h-4 w-4 text-cyan-500" />
-                Audit your MeDo URL
-              </div>
-              <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-3">
-                <div className="flex flex-col gap-3 sm:flex-row">
-                  <Input
-                    type="text"
-                    inputMode="url"
-                    placeholder="https://your-app.medo.dev"
-                    required
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                    disabled={loading}
-                    className="h-12 flex-1 rounded-2xl bg-background/80 px-4 text-base"
-                  />
-                  <label className="flex h-12 cursor-pointer items-center justify-center rounded-2xl border border-border/70 bg-background/80 px-4 text-sm hover:bg-muted whitespace-nowrap">
-                    {screenshots.length > 0
-                      ? `${screenshots.length} screenshots`
-                      : "Upload 7 screenshots"}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      className="hidden"
-                      onChange={(e) =>
-                        setScreenshots(Array.from(e.target.files || []).slice(0, 7))
-                      }
-                    />
-                  </label>
-                </div>
-                <Input
-                  type="text"
-                  placeholder="GitHub Repository URL (Optional)"
-                  value={githubUrl}
-                  onChange={(e) => setGithubUrl(e.target.value)}
-                  disabled={loading}
-                  className="h-12 w-full rounded-2xl bg-background/80 px-4 text-base"
-                />
-
-                {/* ── Advanced Settings (BYOK) ── */}
-                <div className="w-full">
-                  <button
-                    type="button"
-                    onClick={() => setSettingsOpen(!settingsOpen)}
-                    className="inline-flex w-full items-center justify-between rounded-xl border border-border/50 bg-muted/20 px-4 py-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
-                  >
-                    <span className="flex items-center gap-2">
-                      <Settings className="h-4 w-4" />
-                      Advanced Settings (Bring Your Own Key)
-                    </span>
-                    <ChevronDown
-                      className={`h-4 w-4 transition-transform ${settingsOpen ? "rotate-180" : ""}`}
-                    />
-                  </button>
-                  
-{settingsOpen && (
-                    <div className="mt-2 space-y-5 rounded-xl border border-border/50 bg-background/50 p-4 backdrop-blur">
-                       
-                       <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-500">
-                         <strong>Tip:</strong> Go to Settings page to save API keys securely for future use.
-                       </div>
-
-                       {/* Vision Provider (Frontend) */}
-                      <div className="space-y-3">
-                        <h4 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
-                          <LayoutPanelLeft className="h-4 w-4 text-cyan-500" />
-                          Frontend Vision Model
-                        </h4>
-                        <div className="space-y-1.5 pl-5 border-l-2 border-border/50">
-                          <select
-                            value={visionProvider}
-                            onChange={(e) => setVisionProvider(e.target.value)}
-                            className="w-full rounded-lg border border-border/50 bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
-                          >
-                            {AI_PROVIDERS.map((p) => (
-                              <option key={p.value} value={p.value}>{p.label}</option>
-                            ))}
-                          </select>
-                          <p className="text-[10px] text-muted-foreground">
-                            {AI_PROVIDERS.find(p => p.value === visionProvider)?.hint}
-                          </p>
-
-                          {visionProvider !== "default" && (
-                            <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1 pt-2">
-                              <label className="flex items-center gap-1.5 text-xs font-semibold text-foreground/80">
-                                <Key className="h-3 w-3" />
-                                Vision API Key
-                              </label>
-                              <Input
-                                type="password"
-                                placeholder={keysSaved && !visionKey ? "Key saved in database (leave blank to keep)" : "Enter API key"}
-                                value={visionKey}
-                                onChange={(e) => setVisionKey(e.target.value)}
-                                className="h-9 text-sm"
-                              />
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      <hr className="border-border/50" />
-
-                      {/* Code Provider (Backend) */}
-                      <div className="space-y-3">
-                        <h4 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
-                          <Settings className="h-4 w-4 text-emerald-500" />
-                          Backend Code Model
-                        </h4>
-                        <div className="space-y-1.5 pl-5 border-l-2 border-border/50">
-                          <select
-                            value={codeProvider}
-                            onChange={(e) => setCodeProvider(e.target.value)}
-                            className="w-full rounded-lg border border-border/50 bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                          >
-                            {AI_PROVIDERS.map((p) => (
-                              <option key={p.value} value={p.value}>{p.label}</option>
-                            ))}
-                          </select>
-                          <p className="text-[10px] text-muted-foreground">
-                            {AI_PROVIDERS.find(p => p.value === codeProvider)?.hint}
-                          </p>
-
-                          {codeProvider !== "default" && (
-                            <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1 pt-2">
-                              <label className="flex items-center gap-1.5 text-xs font-semibold text-foreground/80">
-                                <Key className="h-3 w-3" />
-                                Code API Key
-                              </label>
-                              <Input
-                                type="password"
-                                placeholder={keysSaved && !codeKey ? "Key saved in database (leave blank to keep)" : "Enter API key"}
-                                value={codeKey}
-                                onChange={(e) => setCodeKey(e.target.value)}
-                                className="h-9 text-sm"
-                              />
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {(visionKey || codeKey || visionProvider !== "default" || codeProvider !== "default") && (
-                        <div className="pt-2">
-                          <Button 
-                            type="button" 
-                            variant="secondary" 
-                            size="sm" 
-                            className="w-full"
-                            onClick={handleSaveSettings}
-                            disabled={isSaving || (!visionKey && !codeKey && !keysSaved)}
-                          >
-                            {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4 text-emerald-500" />}
-                            {keysSaved && !visionKey && !codeKey ? "Settings Saved Securely" : "Save Settings to Profile"}
-                          </Button>
-                        </div>
-                      )}
-
-                    </div>
-                  )}
-                </div>
-
-                <Button
-                  type="submit"
-                  size="lg"
-                  disabled={loading}
-                  className="h-12 w-full rounded-2xl px-6 text-sm font-semibold shadow-lg shadow-cyan-500/15 sm:w-auto"
-                >
-                  {loading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Analyzing...
-                    </>
-                  ) : (
-                    <>
-                      Analyze app
-                      <ArrowRight className="ml-2 h-4 w-4" />
-                    </>
-                  )}
-                </Button>
-              </form>
-
-              {/* Loading progress indicator */}
-              {loading && (
-                <div className="mt-5 space-y-3 rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-4">
-                  <div className="flex items-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin text-cyan-400" />
-                    <span className="text-sm font-medium text-cyan-300">
-                      {loadingSteps[loadingStep]}
-                    </span>
-                  </div>
-                  <div className="flex gap-1">
-                    {loadingSteps.map((_, idx) => (
-                      <div
-                        key={idx}
-                        className={`h-1 flex-1 rounded-full transition-all duration-500 ${
-                          idx <= loadingStep ? "bg-cyan-400" : "bg-muted/40"
-                        }`}
-                      />
-                    ))}
-                  </div>
-                  <p className="text-[11px] text-cyan-300/50">
-                    This may take 15-30 seconds depending on the website size.
-                  </p>
-                </div>
-              )}
-
-              {!loading && (
-                <div className="mt-4 flex flex-wrap items-center gap-2">
-                  <span className="text-sm text-muted-foreground">Try a sample:</span>
-                  {["medo.dev", "resumeana.com", "acme.medo.dev"].map((item) => (
-                    <button
-                      key={item}
-                      type="button"
-                      onClick={() => setUrl(item)}
-                      className="rounded-full border border-border/70 bg-muted/50 px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-muted"
-                    >
-                      {item}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+            <AuditForm
+              url={url}
+              setUrl={setUrl}
+              githubUrl={githubUrl}
+              setGithubUrl={setGithubUrl}
+              screenshots={screenshots}
+              setScreenshots={setScreenshots}
+              loading={loading}
+              loadingStep={loadingStep}
+              isSignedIn={isSignedIn || false}
+              onSubmit={handleSubmit}
+              visionProvider={visionProvider}
+              setVisionProvider={setVisionProvider}
+              visionKey={visionKey}
+              setVisionKey={setVisionKey}
+              codeProvider={codeProvider}
+              setCodeProvider={setCodeProvider}
+              codeKey={codeKey}
+              setCodeKey={setCodeKey}
+              keysSaved={keysSaved}
+              isSaving={isSaving}
+              onSaveSettings={handleSaveSettings}
+            />
           </div>
 
-          {/* Static preview card */}
           <div className="relative">
             <Card className="border-border/70 bg-background/80 shadow-[0_30px_90px_-45px_rgba(0,0,0,0.55)] backdrop-blur">
               <CardHeader className="space-y-2 border-b border-border/60 pb-5">
@@ -555,7 +297,6 @@ export default function Home() {
                 </CardDescription>
               </CardHeader>
               <div className="space-y-5 p-5">
-                {/* Score preview */}
                 <div className="rounded-2xl border border-border/70 bg-muted/35 p-4">
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-muted-foreground">Launch score</span>
@@ -575,7 +316,6 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Preview fixes */}
                 <div className="space-y-3 rounded-2xl border border-border/70 bg-background p-4">
                   <div className="flex items-center gap-2 text-sm font-medium">
                     <CheckCircle2 className="h-4 w-4 text-emerald-500" />
@@ -592,7 +332,6 @@ export default function Home() {
                   ))}
                 </div>
 
-                {/* Feature badges */}
                 <div className="grid gap-4 sm:grid-cols-3">
                   {checks.map((item) => {
                     const Icon = item.icon;
