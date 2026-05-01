@@ -244,7 +244,7 @@ export async function POST(req: NextRequest) {
 
         try {
           console.log(`Navigating to ${validUrl}...`);
-          const navigationPromise = page.goto(validUrl, { waitUntil: "domcontentloaded", timeout: 12000 });
+          const navigationPromise = page.goto(validUrl, { waitUntil: "load", timeout: 15000 });
 
           // Add timeout for navigation
           await Promise.race([

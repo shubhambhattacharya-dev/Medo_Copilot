@@ -315,9 +315,22 @@ function buildMeasuredResult({
   backendMetrics?: BackendMetrics | null;
   lighthouse?: LighthouseMetrics | null;
 }) {
-  const frontendScore = lighthouse 
+  const issuePenalty = issues
+    .filter(i => FRONTEND_CATEGORIES.has(i.category))
+    .reduce((total, issue) => total + scorePenalty(issue), 0);
+
+  const lighthouseAvg = lighthouse 
     ? Math.round((lighthouse.performance + lighthouse.accessibility + lighthouse.bestPractices + lighthouse.seo) / 4)
-    : clampScore(90 - issues.filter(i => FRONTEND_CATEGORIES.has(i.category)).reduce((total, issue) => total + scorePenalty(issue), 0));
+    : null;
+
+  let frontendScore: number;
+  if (lighthouseAvg !== null) {
+    // If we have Lighthouse, it's the primary score, but penalized slightly by our custom rules (30% weight)
+    frontendScore = Math.max(0, lighthouseAvg - Math.round(issuePenalty * 0.3));
+  } else {
+    // Without Lighthouse, start at 85 (more conservative) and subtract full penalties
+    frontendScore = clampScore(85 - issuePenalty);
+  }
 
   const backendScore = backendMetrics
     ? Math.round((backendMetrics.security + backendMetrics.codeQuality + backendMetrics.maintainability) / 3)

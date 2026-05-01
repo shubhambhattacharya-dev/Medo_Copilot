@@ -96,7 +96,8 @@ OUTPUT (JSON)
     const timeoutId = setTimeout(() => controller.abort(), 12000); // 12 seconds max
 
     try {
-      const endpoint = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&category=PERFORMANCE&category=ACCESSIBILITY&category=BEST_PRACTICES&category=SEO`;
+      const key = process.env.PAGESPEED_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+      const endpoint = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&category=PERFORMANCE&category=ACCESSIBILITY&category=BEST_PRACTICES&category=SEO${key ? `&key=${key}` : ""}`;
       const res = await fetch(endpoint, { 
         next: { revalidate: 3600 },
         signal: controller.signal
