@@ -4,9 +4,9 @@ import { saveUserSettings, ensureUserSettingsTable } from "@/lib/audits";
 import { z } from "zod";
 
 const settingsSchema = z.object({
-  visionProvider: z.enum(["default", "gemini", "groq", "openrouter"]).optional(),
+  visionProvider: z.enum(["default", "gemini", "groq", "openrouter", "tencent", "poolside", "nvidia"]).optional(),
   visionKey: z.string().max(200).optional().nullable(),
-  codeProvider: z.enum(["default", "gemini", "groq", "openrouter"]).optional(),
+  codeProvider: z.enum(["default", "gemini", "groq", "openrouter", "tencent", "poolside", "nvidia"]).optional(),
   codeKey: z.string().max(200).optional().nullable(),
 });
 

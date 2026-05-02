@@ -32,9 +32,13 @@ async function runRealAudit(url: string) {
     console.log(`Extracted Signals: ${signals.ctas.length} CTAs, Title: ${signals.title}`);
 
     console.log("Step 3: Initializing AI Provider...");
-    const visionProvider = AiService.getVisionModel();
+    const providerName = process.argv[3];
+    const visionProvider = providerName 
+      ? AiService.getVisionModel(providerName) 
+      : AiService.getVisionModel();
+
     if (!visionProvider) {
-      throw new Error("Failed to initialize AI provider. Check GOOGLE_GENERATIVE_AI_API_KEY.");
+      throw new Error(`Failed to initialize AI provider ${providerName || 'default'}. Check API keys.`);
     }
 
     console.log(`Step 4: Running Full AI Audit using ${visionProvider.name}...`);

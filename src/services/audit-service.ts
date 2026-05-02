@@ -1,6 +1,6 @@
 import { generateText } from "ai";
-import { AiProvider } from "./ai-service";
-import type { AuditResponse, LighthouseMetrics, BackendMetrics, PageSignals } from "@/types/audit";
+import { AiProvider, AiService } from "./ai-service";
+import type { AuditResponse, LighthouseMetrics, BackendMetrics, PageSignals, AuditIssue } from "@/types/audit";
 import { StaticAnalyzer } from "@/lib/static-analyzer";
 import { mergeIssues, parseJsonFromText, buildRuleIssues, buildMeasuredResult } from "@/lib/audit-helpers";
 
@@ -131,6 +131,7 @@ OUTPUT (JSON)
     contextData: { url: string; title: string; text: string; signals: PageSignals }
   ): Promise<AuditResponse> {
     const TASK_TIMEOUT = 28000;
+    const errors: string[] = [];
 
     const safeTask = async <T>(taskPromise: Promise<T>, taskName: string): Promise<T | null> => {
       try {
@@ -141,7 +142,9 @@ OUTPUT (JSON)
           )
         ]);
       } catch (err) {
-        console.error(`[Audit Task Failed] ${taskName}:`, err instanceof Error ? err.message : String(err));
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[Audit Task Failed] ${taskName}:`, msg);
+        errors.push(`${taskName}: ${msg}`);
         return null;
       }
     };
@@ -155,40 +158,124 @@ OUTPUT (JSON)
       finalScreenshots.push(lighthouseMetrics.screenshot);
     }
 
-    // 2. Vision Analysis
-    const visionTask = safeTask(generateText({
-      model: visionProvider.model,
+    // 2. Vision Analysis with Fallback
+    let visionTaskRes = null;
+    let currentVisionProvider = visionProvider;
+
+    const supportsVision = currentVisionProvider.supportsVision && finalScreenshots.length > 0;
+
+    visionTaskRes = await safeTask(generateText({
+      model: currentVisionProvider.model,
+      system: "You are a specialized audit agent. You MUST only output valid JSON. Do not include any preamble, explanation, or conversational text. Ensure all strings are properly escaped and the JSON structure is strictly followed.",
       messages: [
         {
           role: "user",
           content: [
-            { type: "text", text: this.getFrontendPrompt(contextData.url, contextData.title, contextData.text, contextData.signals, !!finalScreenshots.length) },
-            ...finalScreenshots.map(s => ({ type: "image" as const, image: Buffer.from(s, "base64"), mediaType: "image/png" as const }))
+            { 
+              type: "text", 
+              text: this.getFrontendPrompt(
+                contextData.url, 
+                contextData.title, 
+                contextData.text, 
+                contextData.signals, 
+                supportsVision
+              ) 
+            },
+            ...(supportsVision 
+              ? finalScreenshots.map(s => ({ 
+                  type: "image" as const, 
+                  image: Buffer.from(s, "base64"), 
+                  mediaType: "image/png" as const 
+                })) 
+              : [])
           ]
         }
       ]
-    }), `Vision (${visionProvider.name})`);
+    }), `Vision (${currentVisionProvider.name})`);
 
-    // 3. Code Analysis
-    const codeTask = codeProvider && githubCodeText
-      ? safeTask(generateText({ model: codeProvider.model, prompt: this.getBackendPrompt(githubCodeText) }), `Code (${codeProvider.name})`)
-      : Promise.resolve(null);
+    // Fallback if primary vision failed and it wasn't already a default
+    if (!visionTaskRes && currentVisionProvider.name !== "gemini") {
+      console.log("[Audit Service] Primary vision failed, trying fallback (Gemini)...");
+      const fallbackVision = AiService.getVisionModel("gemini");
+      if (fallbackVision) {
+        currentVisionProvider = fallbackVision;
+        const fbSupportsVision = currentVisionProvider.supportsVision && finalScreenshots.length > 0;
+        
+        visionTaskRes = await safeTask(generateText({
+          model: currentVisionProvider.model,
+          messages: [
+            {
+              role: "user",
+              content: [
+                { 
+                  type: "text", 
+                  text: this.getFrontendPrompt(
+                    contextData.url, 
+                    contextData.title, 
+                    contextData.text, 
+                    contextData.signals, 
+                    fbSupportsVision
+                  ) 
+                },
+                ...(fbSupportsVision 
+                  ? finalScreenshots.map(s => ({ 
+                      type: "image" as const, 
+                      image: Buffer.from(s, "base64"), 
+                      mediaType: "image/png" as const 
+                    })) 
+                  : [])
+              ]
+            }
+          ]
+        }), `Vision Fallback (${currentVisionProvider.name})`);
+      }
+    }
+
+    // 3. Code Analysis with Fallback
+    let codeTaskRes = null;
+    let currentCodeProvider = codeProvider;
+
+    if (currentCodeProvider && githubCodeText) {
+      codeTaskRes = await safeTask(generateText({ 
+        model: currentCodeProvider.model, 
+        prompt: this.getBackendPrompt(githubCodeText) 
+      }), `Code (${currentCodeProvider.name})`);
+
+      // Fallback if primary code failed
+      if (!codeTaskRes) {
+        console.log("[Audit Service] Primary code analysis failed, trying fallback...");
+        const fallbackCode = AiService.getCodeModel(); // Gets best available from fallback list
+        if (fallbackCode && fallbackCode.name !== currentCodeProvider.name) {
+          currentCodeProvider = fallbackCode;
+          codeTaskRes = await safeTask(generateText({ 
+            model: currentCodeProvider.model, 
+            prompt: this.getBackendPrompt(githubCodeText) 
+          }), `Code Fallback (${currentCodeProvider.name})`);
+        }
+      }
+    }
 
     // 4. Static Backend Analysis
     const backendMetrics = githubCodeText ? StaticAnalyzer.analyze(githubCodeText) : null;
-
-    const [visionTaskRes, codeTaskRes] = await Promise.all([visionTask, codeTask]);
-
-
 
     let visionResult: AuditResponse | null = null;
     let codeResult: AuditResponse | null = null;
 
     if (visionTaskRes?.text) {
-      try { visionResult = parseJsonFromText(visionTaskRes.text); } catch {}
+      try { 
+        visionResult = parseJsonFromText(visionTaskRes.text); 
+      } catch (e) {
+        console.error("[Audit Service] Failed to parse Vision JSON:", e);
+        errors.push("Vision: Invalid JSON response");
+      }
     }
     if (codeTaskRes?.text) {
-      try { codeResult = parseJsonFromText(codeTaskRes.text); } catch {}
+      try { 
+        codeResult = parseJsonFromText(codeTaskRes.text); 
+      } catch (e) {
+        console.error("[Audit Service] Failed to parse Code JSON:", e);
+        errors.push("Code: Invalid JSON response");
+      }
     }
 
     const ruleIssues = buildRuleIssues(contextData.signals);
@@ -199,7 +286,21 @@ OUTPUT (JSON)
       seo: lighthouseMetrics.seo
     } : null;
 
-    return this.mergeResults(visionResult, codeResult, cleanLighthouse, backendMetrics, visionProvider.name, ruleIssues, codeProvider?.name);
+    const merged = this.mergeResults(
+      visionResult, 
+      codeResult, 
+      cleanLighthouse, 
+      backendMetrics, 
+      currentVisionProvider.name, 
+      ruleIssues, 
+      currentCodeProvider?.name
+    );
+
+    if (errors.length > 0) {
+      merged.warning = (merged.warning ? merged.warning + " " : "") + `Technical issues encountered: ${errors.join(", ")}`;
+    }
+
+    return merged;
   }
 
   private static mergeResults(

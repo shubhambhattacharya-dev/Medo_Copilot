@@ -23,6 +23,9 @@ const MODEL_OPTIONS = [
   { value: "gemini", label: "Google Gemini", description: "Best for visual/screenshot analysis" },
   { value: "groq", label: "Groq (Llama)", description: "Fastest response time" },
   { value: "openrouter", label: "OpenRouter (Claude)", description: "Requires your own API key" },
+  { value: "tencent", label: "Tencent Hunyuan", description: "Good general accuracy (OpenRouter)" },
+  { value: "poolside", label: "Poolside", description: "Optimized for code analysis (OpenRouter)" },
+  { value: "nvidia", label: "NVIDIA Nemotron", description: "High reasoning capabilities (OpenRouter)" },
 ];
 
 interface UserSettings {

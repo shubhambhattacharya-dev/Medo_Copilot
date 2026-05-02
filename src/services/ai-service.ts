@@ -3,7 +3,7 @@ import { createGroq } from "@ai-sdk/groq";
 import { createOpenAI } from "@ai-sdk/openai";
 import { LanguageModel } from "ai";
 
-export type AiProviderName = "gemini" | "groq" | "openrouter";
+export type AiProviderName = "gemini" | "groq" | "openrouter" | "tencent" | "poolside" | "nvidia";
 
 export interface AiProvider {
   name: string;
@@ -43,7 +43,7 @@ export class AiService {
       } 
       
       if (providerName === "openrouter") {
-        const key = apiKey;
+        const key = apiKey || process.env.OPENROUTER_API_KEY;
         if (!key) return null;
         const customOpenRouter = createOpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey: key });
         return {
@@ -51,6 +51,42 @@ export class AiService {
           model: customOpenRouter("anthropic/claude-3.5-sonnet"),
           supportsSchema: false,
           supportsVision: true
+        };
+      }
+
+      if (providerName === "tencent") {
+        const key = apiKey || process.env.TENCENT_API;
+        if (!key) return null;
+        const customTencent = createOpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey: key });
+        return {
+          name: "tencent",
+          model: customTencent("tencent/hunyuan-a13b-instruct"),
+          supportsSchema: false,
+          supportsVision: false
+        };
+      }
+
+      if (providerName === "poolside") {
+        const key = apiKey || process.env.POOLSIDE_API;
+        if (!key) return null;
+        const customPoolside = createOpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey: key });
+        return {
+          name: "poolside",
+          model: customPoolside("poolside/laguna-m-1"),
+          supportsSchema: false,
+          supportsVision: false
+        };
+      }
+
+      if (providerName === "nvidia") {
+        const key = apiKey || process.env.NVIDIA_API;
+        if (!key) return null;
+        const customNvidia = createOpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey: key });
+        return {
+          name: "nvidia",
+          model: customNvidia("nvidia/llama-3.1-nemotron-70b-instruct"),
+          supportsSchema: false,
+          supportsVision: false
         };
       }
     } catch (err) {
@@ -70,10 +106,12 @@ export class AiService {
     }
 
     // 2. Default Order: Gemini (Best Vision) -> Groq (Good Vision) -> OpenRouter
-    return (
-      this.getProviderModel("gemini", null) || 
-      this.getProviderModel("groq", null)
-    );
+    const defaultVision = this.getProviderModel("gemini", null) || 
+                         this.getProviderModel("groq", null);
+    
+    if (defaultVision && defaultVision.supportsVision) return defaultVision;
+    
+    return defaultVision;
   }
 
   /**
@@ -86,8 +124,11 @@ export class AiService {
       if (p) return p;
     }
 
-    // 2. Default Order: Groq (Fastest) -> Gemini (Reliable)
+    // 2. Default Order: Poolside (Dev specialized) -> Nvidia (Strong reasoning) -> Groq (Fastest) -> Gemini (Reliable)
     return (
+      this.getProviderModel("poolside", null) ||
+      this.getProviderModel("nvidia", null) ||
+      this.getProviderModel("tencent", null) ||
       this.getProviderModel("groq", null) || 
       this.getProviderModel("gemini", null)
     );

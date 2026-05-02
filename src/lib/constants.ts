@@ -5,6 +5,9 @@ export const AI_PROVIDERS = [
   { value: "gemini", label: "Google Gemini", hint: "Best for vision + structured output" },
   { value: "groq", label: "Groq (Llama)", hint: "Fastest inference speed" },
   { value: "openrouter", label: "OpenRouter (Claude)", hint: "Requires your own API key" },
+  { value: "tencent", label: "Tencent Hunyuan", hint: "Good general accuracy (OpenRouter)" },
+  { value: "poolside", label: "Poolside", hint: "Optimized for code analysis (OpenRouter)" },
+  { value: "nvidia", label: "NVIDIA Nemotron", hint: "High reasoning capabilities (OpenRouter)" },
 ];
 
 export const checks = [
