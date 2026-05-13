@@ -24,7 +24,7 @@ export class AiService {
         const customGoogle = createGoogleGenerativeAI({ apiKey: key });
         const envModel = process.env.GOOGLE_GENERATIVE_AI_MODEL;
         const modelName = (envModel === "gemini-1.5-flash" || !envModel || envModel === "gemini-1.5-flash-latest") 
-          ? "gemini-2.0-flash-exp" 
+          ? "gemini-2.0-flash" 
           : envModel;
 
         
@@ -41,7 +41,7 @@ export class AiService {
         if (!key) return null;
         const customGroq = createGroq({ apiKey: key });
         // Try llama-4-scout first, fallback to llama-3.2-90b-vision
-        const modelName = process.env.GROQ_VISION_MODEL || "llama-3.2-90b-vision-preview";
+        const modelName = process.env.GROQ_VISION_MODEL || "llama-4-scout-17b-16e-instruct";
         return {
           name: "groq",
           model: customGroq(modelName),
