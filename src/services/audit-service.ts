@@ -398,14 +398,34 @@ OUTPUT (JSON)
     // Use mergeIssues to deduplicate between vision and code issues
     const allIssues = mergeIssues(vision?.issues || [], code?.issues || []);
 
-    // Improved Scoring Logic for partial/Vercel environments
-    // If vision is missing (Vercel), Lighthouse becomes a much stronger signal for the frontend score
-    const frontendScore = vision 
-      ? (vision.launchScore * 0.7 + (lighthouse ? lighthouse.performance * 0.3 : vision.launchScore * 0.3))
-      : (lighthouse ? Math.round((lighthouse.performance + lighthouse.accessibility + lighthouse.bestPractices + lighthouse.seo) / 4) : 0);
-    
-    const backendScore = code?.launchScore ?? (backendMetrics ? Math.round((backendMetrics.security + backendMetrics.codeQuality + backendMetrics.maintainability) / 3) : 0);
-    
+    // Scoring Logic - More favorable for launch readiness
+    const lhAvg = lighthouse ? Math.round((lighthouse.performance + lighthouse.accessibility + lighthouse.bestPractices + lighthouse.seo) / 4) : 0;
+    const beAvg = backendMetrics ? Math.round((backendMetrics.security + backendMetrics.codeQuality + backendMetrics.maintainability) / 3) : 0;
+
+    let frontendScore = vision ? Math.round(vision.launchScore * 0.6 + lhAvg * 0.4) : lhAvg;
+    let backendScore = code ? Math.round(code.launchScore * 0.6 + beAvg * 0.4) : beAvg;
+
+    // Boost scores if automated tools show good results (no severe issues)
+    if (lighthouse && allIssues.filter(i => i.severity === "high").length === 0) {
+      if (lighthouse.performance >= 85 && lighthouse.accessibility >= 90 && lighthouse.bestPractices >= 90 && lighthouse.seo >= 90) {
+        frontendScore = Math.min(98, frontendScore + 8);
+      } else if (lighthouse.performance >= 80) {
+        frontendScore = Math.min(95, frontendScore + 4);
+      }
+    }
+
+    if (backendMetrics && allIssues.filter(i => i.category === "security" && i.severity === "high").length === 0) {
+      if (backendMetrics.security >= 85 && backendMetrics.codeQuality >= 80 && backendMetrics.maintainability >= 80) {
+        backendScore = Math.min(98, backendScore + 6);
+      }
+    }
+
+    // Ensure minimum threshold for good audits
+    if (allIssues.filter(i => i.severity === "high").length === 0) {
+      frontendScore = Math.max(80, frontendScore);
+      backendScore = Math.max(80, backendScore);
+    }
+
     const finalScore = Math.round(
       backendMetrics 
         ? (frontendScore * 0.5 + backendScore * 0.5) 

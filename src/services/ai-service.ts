@@ -22,7 +22,6 @@ export class AiService {
         const key = apiKey || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
         if (!key) return null;
         const customGoogle = createGoogleGenerativeAI({ apiKey: key });
-        // Use gemini-2.0-flash as default (replaced deprecated 1.5-flash)
         const envModel = process.env.GOOGLE_GENERATIVE_AI_MODEL;
         const modelName = (envModel === "gemini-1.5-flash" || !envModel || envModel === "gemini-1.5-flash-latest") 
           ? "gemini-2.0-flash" 
@@ -40,9 +39,10 @@ export class AiService {
         const key = apiKey || process.env.GROQ_API_KEY;
         if (!key) return null;
         const customGroq = createGroq({ apiKey: key });
+        // Use llama-4-scout for vision (supports image understanding)
         return {
           name: "groq",
-          model: customGroq(process.env.GROQ_MODEL || "llama-3.2-90b-vision-preview"),
+          model: customGroq("meta-llama/llama-4-scout-17b-16e-instruct"),
           supportsSchema: false,
           supportsVision: true
         };
