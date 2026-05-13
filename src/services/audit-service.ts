@@ -196,15 +196,15 @@ OUTPUT (JSON)
                   supportsVision
                 ) 
               },
-              ...(supportsVision 
-                ? finalScreenshots.map(s => {
-                    const imgPart: ImagePart = { 
-                      type: "image", 
-                      image: Buffer.from(s, "base64"), 
-                      mediaType: "image/png" 
+              ...(supportsVision && finalScreenshots.length > 0
+                ? finalScreenshots.map((s): ImagePart => {
+                    const imgPart: ImagePart = {
+                      type: "image",
+                      image: Buffer.from(s, "base64"),
+                      mediaType: "image/png"
                     };
                     return imgPart;
-                  }) 
+                  })
                 : [])
             ]
           }
