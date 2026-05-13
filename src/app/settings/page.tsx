@@ -26,6 +26,7 @@ const MODEL_OPTIONS = [
   { value: "tencent", label: "Tencent Hunyuan", description: "Good general accuracy (OpenRouter)" },
   { value: "poolside", label: "Poolside", description: "Optimized for code analysis (OpenRouter)" },
   { value: "nvidia", label: "NVIDIA Nemotron", description: "High reasoning capabilities (OpenRouter)" },
+  { value: "mimo", label: "Mimo AI", description: "Alternative high-performance model" },
 ];
 
 interface UserSettings {

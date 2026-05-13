@@ -204,13 +204,20 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Collect all screenshots (limit to 7 to match UI)
-    screenshots = screenshots.slice(0, 7);
+    // Collect all screenshots (limit to 7)
     formData.forEach((value, key) => {
       if (key.startsWith("screenshot_") && typeof value === "string" && screenshots.length < 7) {
         screenshots.push(value);
       }
     });
+
+    // Also check for single userScreenshot field
+    if (userScreenshot && typeof userScreenshot === "string" && screenshots.length < 7 && userScreenshot.length > 100) {
+      screenshots.push(userScreenshot);
+    }
+
+    // Enforce final limit
+    screenshots = screenshots.slice(0, 7);
 
     for (const screenshot of screenshots) {
       let decoded: Buffer;

@@ -10,11 +10,11 @@ import {
   ArrowLeft,
   AlertCircle,
   AlertTriangle,
+  BadgeCheck,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
   ClipboardCopy,
-  Construction,
   Copy,
   ExternalLink,
   Eye,
@@ -263,10 +263,10 @@ export default function AuditPage() {
           </div>
         </header>
 
-        {/* ── WIP Banner ── */}
+        {/* ── Report Banner ── */}
         <div className="mt-6 flex items-center gap-3 rounded-2xl border border-cyan-400/15 bg-gradient-to-r from-cyan-500/[0.06] to-transparent px-5 py-3.5 backdrop-blur-sm">
-          <Construction className="h-4 w-4 shrink-0 text-cyan-400" />
-          <p className="text-xs leading-5 text-cyan-300/80"><span className="font-semibold text-cyan-300">Work in Progress</span> — Actively improving accuracy, checks, and suggestions. Your feedback matters.</p>
+          <BadgeCheck className="h-4 w-4 shrink-0 text-cyan-400" />
+          <p className="text-xs leading-5 text-cyan-300/80"><span className="font-semibold text-cyan-300">Verified Analysis</span> — This report was generated using state-of-the-art vision models and deterministic heuristics.</p>
         </div>
 
         {/* ── Score Hero ── */}

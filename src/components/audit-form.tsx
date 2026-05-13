@@ -88,7 +88,7 @@ export function AuditForm({
           <label className="flex h-12 cursor-pointer items-center justify-center rounded-2xl border border-border/70 bg-background/80 px-4 text-sm hover:bg-muted whitespace-nowrap">
             {screenshots.length > 0
               ? `${screenshots.length} screenshots`
-              : "Upload 7 screenshots"}
+              : "Upload screenshots (Optional)"}
             <input
               type="file"
               accept="image/*"
@@ -100,6 +100,9 @@ export function AuditForm({
             />
           </label>
         </div>
+        <p className="px-1 text-[10px] text-muted-foreground">
+          Tip: 1-3 screenshots of different pages work best. If omitted, we'll try to capture them automatically.
+        </p>
         <Input
           type="text"
           placeholder="GitHub Repository URL (Optional)"
@@ -228,12 +231,12 @@ export function AuditForm({
           )}
         </div>
 
-        {isSignedIn ? (
+        <div className="flex flex-col gap-3 sm:flex-row items-center">
           <Button
             type="submit"
             size="lg"
             disabled={loading}
-            className="h-12 w-full rounded-2xl px-6 text-sm font-semibold shadow-lg shadow-cyan-500/15 sm:w-auto"
+            className="h-12 w-full rounded-2xl px-8 text-sm font-semibold shadow-lg shadow-cyan-500/15 sm:w-auto bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 text-white border-0"
           >
             {loading ? (
               <>
@@ -247,18 +250,13 @@ export function AuditForm({
               </>
             )}
           </Button>
-        ) : (
-          <SignInButton mode="modal">
-            <Button
-              type="button"
-              size="lg"
-              className="h-12 w-full rounded-2xl px-6 text-sm font-semibold shadow-lg shadow-cyan-500/15 sm:w-auto"
-            >
-              Sign in to Analyze
-              <ArrowRight className="ml-2 h-4 w-4" />
-            </Button>
-          </SignInButton>
-        )}
+          
+          {!isSignedIn && !loading && (
+            <span className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold bg-muted/50 px-2 py-1 rounded-md border border-border/50">
+              Guest Mode
+            </span>
+          )}
+        </div>
       </form>
 
       {/* Loading indicator */}

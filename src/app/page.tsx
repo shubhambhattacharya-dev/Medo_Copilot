@@ -196,7 +196,7 @@ export default function Home() {
                 Medo Copilot
               </p>
               <p className="text-xs text-muted-foreground">
-                Launch-ready audit for MeDo apps
+                Professional Launch-Ready Audit
               </p>
             </div>
           </div>
@@ -225,11 +225,6 @@ export default function Home() {
 
         <section className="grid flex-1 items-center gap-10 py-10 lg:grid-cols-[1.08fr_0.92fr] lg:gap-12 lg:py-16">
           <div className="relative max-w-2xl">
-            <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-4 py-2 text-sm text-muted-foreground backdrop-blur">
-              <Sparkles className="h-4 w-4 text-cyan-500" />
-              Built for the MeDo hackathon
-            </div>
-
             <h1 className="mt-6 max-w-xl text-4xl font-semibold tracking-tight text-balance sm:text-5xl lg:text-7xl">
               Is your MeDo app ready to{" "}
               <span className="bg-gradient-to-r from-cyan-500 via-emerald-500 to-lime-500 bg-clip-text text-transparent">

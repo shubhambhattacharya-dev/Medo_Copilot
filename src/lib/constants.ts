@@ -8,6 +8,7 @@ export const AI_PROVIDERS = [
   { value: "tencent", label: "Tencent Hunyuan", hint: "Good general accuracy (OpenRouter)" },
   { value: "poolside", label: "Poolside", hint: "Optimized for code analysis (OpenRouter)" },
   { value: "nvidia", label: "NVIDIA Nemotron", hint: "High reasoning capabilities (OpenRouter)" },
+  { value: "mimo", label: "Mimo AI", hint: "Alternative high-performance model" },
 ];
 
 export const checks = [

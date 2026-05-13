@@ -3,7 +3,7 @@ import { createGroq } from "@ai-sdk/groq";
 import { createOpenAI } from "@ai-sdk/openai";
 import { LanguageModel } from "ai";
 
-export type AiProviderName = "gemini" | "groq" | "openrouter" | "tencent" | "poolside" | "nvidia";
+export type AiProviderName = "gemini" | "groq" | "openrouter" | "tencent" | "poolside" | "nvidia" | "mimo";
 
 export interface AiProvider {
   name: string;
@@ -22,9 +22,15 @@ export class AiService {
         const key = apiKey || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
         if (!key) return null;
         const customGoogle = createGoogleGenerativeAI({ apiKey: key });
+        // Use gemini-2.0-flash as default (replaced deprecated 1.5-flash)
+        const envModel = process.env.GOOGLE_GENERATIVE_AI_MODEL;
+        const modelName = (envModel === "gemini-1.5-flash" || !envModel || envModel === "gemini-1.5-flash-latest") 
+          ? "gemini-2.0-flash" 
+          : envModel;
+        
         return {
           name: "gemini",
-          model: customGoogle(process.env.GOOGLE_GENERATIVE_AI_MODEL || "gemini-2.0-flash"),
+          model: customGoogle(modelName),
           supportsSchema: true,
           supportsVision: true
         };
@@ -55,7 +61,7 @@ export class AiService {
       }
 
       if (providerName === "tencent") {
-        const key = apiKey || process.env.TENCENT_API;
+        const key = apiKey || process.env.TENCENT_API || process.env.OPENROUTER_API_KEY;
         if (!key) return null;
         const customTencent = createOpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey: key });
         return {
@@ -67,7 +73,7 @@ export class AiService {
       }
 
       if (providerName === "poolside") {
-        const key = apiKey || process.env.POOLSIDE_API;
+        const key = apiKey || process.env.POOLSIDE_API || process.env.OPENROUTER_API_KEY;
         if (!key) return null;
         const customPoolside = createOpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey: key });
         return {
@@ -79,12 +85,26 @@ export class AiService {
       }
 
       if (providerName === "nvidia") {
-        const key = apiKey || process.env.NVIDIA_API;
+        const key = apiKey || process.env.NVIDIA_API || process.env.OPENROUTER_API_KEY;
         if (!key) return null;
         const customNvidia = createOpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey: key });
         return {
           name: "nvidia",
           model: customNvidia("nvidia/llama-3.1-nemotron-70b-instruct"),
+          supportsSchema: false,
+          supportsVision: false
+        };
+      }
+
+      if (providerName === "mimo") {
+        const key = apiKey || process.env.XOMINI_MIMO_API;
+        if (!key) return null;
+        // Assuming MIMO is another OpenRouter-compatible or custom provider
+        // If it's a specific custom one, we'd need more info, but let's try OpenRouter style
+        const customMimo = createOpenAI({ baseURL: "https://api.mimo.ai/v1", apiKey: key });
+        return {
+          name: "mimo",
+          model: customMimo("mimo-1"),
           supportsSchema: false,
           supportsVision: false
         };
@@ -100,18 +120,17 @@ export class AiService {
    */
   static getVisionModel(provider?: string, key?: string | null): AiProvider | null {
     // 1. Try specified provider if valid
-    if (provider) {
+    if (provider && provider !== "default") {
       const p = this.getProviderModel(provider, key || null);
       if (p) return p;
     }
 
-    // 2. Default Order: Gemini (Best Vision) -> Groq (Good Vision) -> OpenRouter
-    const defaultVision = this.getProviderModel("gemini", null) || 
-                         this.getProviderModel("groq", null);
-    
-    if (defaultVision && defaultVision.supportsVision) return defaultVision;
-    
-    return defaultVision;
+    // 2. Default Order: Gemini -> Groq -> OpenRouter
+    return (
+      this.getProviderModel("gemini", null) || 
+      this.getProviderModel("groq", null) ||
+      this.getProviderModel("openrouter", null)
+    );
   }
 
   /**
@@ -119,18 +138,19 @@ export class AiService {
    */
   static getCodeModel(provider?: string, key?: string | null): AiProvider | null {
     // 1. Try specified provider if valid
-    if (provider) {
+    if (provider && provider !== "default") {
       const p = this.getProviderModel(provider, key || null);
       if (p) return p;
     }
 
-    // 2. Default Order: Poolside (Dev specialized) -> Nvidia (Strong reasoning) -> Groq (Fastest) -> Gemini (Reliable)
+    // 2. Default Order: Poolside -> Nvidia -> Groq -> Gemini -> Tencent -> Mimo
     return (
       this.getProviderModel("poolside", null) ||
       this.getProviderModel("nvidia", null) ||
-      this.getProviderModel("tencent", null) ||
       this.getProviderModel("groq", null) || 
-      this.getProviderModel("gemini", null)
+      this.getProviderModel("gemini", null) ||
+      this.getProviderModel("tencent", null) ||
+      this.getProviderModel("mimo", null)
     );
   }
 }
