@@ -180,6 +180,7 @@ export async function POST(req: NextRequest) {
       links: [],
       imageCount: 0,
       imagesMissingAlt: 0,
+      hasViewport: false,
     };
     let fetchReason = "";
     let screenshots: string[] = [];
