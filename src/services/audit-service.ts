@@ -222,22 +222,6 @@ OUTPUT (JSON)
       console.error(`[Audit Service] All vision providers failed: ${visionErrors.join(", ")}`);
     }
 
-    // Legacy fallback removed - using chain above instead
-    if (visionTaskRes && currentVisionProvider.name !== "gemini") {
-                ...(fbSupportsVision 
-                  ? finalScreenshots.map(s => ({ 
-                      type: "image" as const, 
-                      image: Buffer.from(s, "base64"), 
-                      mediaType: "image/png" as const 
-                    })) 
-                  : [])
-              ]
-            }
-          ]
-        }), `Vision Fallback (${currentVisionProvider.name})`);
-      }
-    }
-
     // 3. Code Analysis with Fallback
     let codeTaskRes = null;
     let currentCodeProvider = codeProvider;
