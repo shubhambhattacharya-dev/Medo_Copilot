@@ -13,9 +13,35 @@ import {
   buildRuleIssues,
   buildMeasuredResult,
   getErrorMessage,
+} from "@/lib/audit-helpers";
+import {
   type AuditResponse,
   type PageSignals,
-} from "@/lib/audit-helpers";
+  type ApiResponse,
+} from "@/types/audit";
+import {
+  AuditError,
+  ValidationError,
+  RateLimitError,
+  BrowserError,
+  AIProviderError,
+} from "@/lib/custom-errors";
+
+// ... rest of imports ...
+
+function createErrorResponse(error: unknown): NextResponse<ApiResponse<any>> {
+  if (error instanceof AuditError) {
+    return NextResponse.json(
+      { success: false, error: error.message, code: error.code, retryAfter: error.status === 429 ? 60 : undefined },
+      { status: error.status }
+    );
+  }
+  const message = error instanceof Error ? error.message : "An unexpected error occurred during analysis.";
+  return NextResponse.json(
+    { success: false, error: message, code: "INTERNAL_ERROR" },
+    { status: 500 }
+  );
+}
 
 // Browser pooling
 let browserInstance: Browser | null = null;
@@ -86,19 +112,48 @@ function isPrivateOrLocalUrl(targetUrl: URL) {
 
 export const maxDuration = 60; // Max duration for Vercel (if on Pro)
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<AuditResponse>>> {
   const startTime = Date.now();
   console.log("[Audit API] Request started");
   try {
     const rateLimit = await checkRateLimitAsync(req, { windowMs: 60 * 1000, maxRequests: 5 });
     if (!rateLimit.success) {
-      return rateLimitResponse(rateLimit.resetIn);
+      throw new RateLimitError(rateLimit.resetIn);
     }
 
     const formData = await req.formData();
     const url = formData.get("url") as string | null;
+    const force = formData.get("force") === "true";
     const userScreenshot = formData.get("screenshot") as string | null;
     const githubUrl = formData.get("githubUrl") as string | null;
+
+    if (!url || typeof url !== "string") {
+      throw new ValidationError("URL is required");
+    }
+
+    let validUrl = url.trim();
+    if (!validUrl.startsWith("http://") && !validUrl.startsWith("https://")) {
+      validUrl = `https://${validUrl}`;
+    }
+
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(validUrl);
+    } catch {
+      throw new ValidationError("URL is invalid");
+    }
+
+    // Check for cached audit (within last 1 hour) - early exit if not forced
+    if (!force) {
+      const cachedAudit = await getCachedAudit(validUrl);
+      if (cachedAudit) {
+        console.log(`[Audit API] Returning cached audit for ${validUrl}`);
+        return NextResponse.json({ success: true, data: cachedAudit as unknown as AuditResponse });
+      }
+    }
+
+    // Strip fragment for the actual fetch/analysis as it's client-side only
+    const fetchUrl = parsedUrl.origin + parsedUrl.pathname + parsedUrl.search;
 
     // Extract BYOK settings from form
     const formVisionProvider = formData.get("visionProvider") as string | null;
@@ -106,12 +161,8 @@ export async function POST(req: NextRequest) {
     const formCodeProvider = formData.get("codeProvider") as string | null;
     const formCodeKey = formData.get("codeKey") as string | null;
 
-    if (!url || typeof url !== "string") {
-      return NextResponse.json({ error: "URL is required" }, { status: 400 });
-    }
-
     // Fetch user API keys from database (if authenticated)
-    let userSettings = null;
+    let userSettings: Awaited<ReturnType<typeof getUserSettings>> | null = null;
     let userId: string | null = null;
     try {
       const authResult = await auth();
@@ -136,36 +187,12 @@ export async function POST(req: NextRequest) {
 
     const effectiveCodeKey = formCodeKey || userSettings?.codeKey || null;
 
-    let validUrl = url.trim();
-    if (!validUrl.startsWith("http://") && !validUrl.startsWith("https://")) {
-      validUrl = `https://${validUrl}`;
-    }
-
-    let parsedUrl: URL;
-    try {
-      parsedUrl = new URL(validUrl);
-    } catch {
-      return NextResponse.json({ error: "URL is invalid" }, { status: 400 });
-    }
-
-    // Strip fragment for the actual fetch/analysis as it's client-side only
-    const fetchUrl = parsedUrl.origin + parsedUrl.pathname + parsedUrl.search;
-
     if (!["http:", "https:"].includes(parsedUrl.protocol)) {
-      return NextResponse.json(
-        { error: "Only HTTP and HTTPS URLs can be audited" },
-        { status: 400 }
-      );
+      throw new ValidationError("Only HTTP and HTTPS URLs can be audited");
     }
 
     if (isPrivateOrLocalUrl(parsedUrl)) {
-      return NextResponse.json(
-        {
-          error:
-            "Use a public preview URL. Localhost and private network URLs cannot be audited safely.",
-        },
-        { status: 400 }
-      );
+      throw new ValidationError("Use a public preview URL. Localhost and private network URLs cannot be audited safely.");
     }
 
     console.log(`Fetching HTML from: ${validUrl}`);
@@ -189,10 +216,7 @@ export async function POST(req: NextRequest) {
     if (githubUrl && typeof githubUrl === "string") {
       const githubPattern = /^https?:\/\/github\.com\/[\w-]+\/[\w.-]+(\/tree\/[\w.-]+)?\/?$/;
       if (!githubPattern.test(githubUrl)) {
-        return NextResponse.json(
-          { error: "Invalid GitHub URL. Must match pattern like github.com/owner/repo or github.com/owner/repo/tree/branch" },
-          { status: 400 }
-        );
+        throw new ValidationError("Invalid GitHub URL. Must match pattern like github.com/owner/repo or github.com/owner/repo/tree/branch");
       }
       console.log(`Fetching GitHub code from: ${githubUrl}`);
       try {
@@ -225,16 +249,10 @@ export async function POST(req: NextRequest) {
       try {
         decoded = Buffer.from(screenshot, "base64");
       } catch {
-        return NextResponse.json(
-          { error: "Invalid screenshot format. Must be valid base64." },
-          { status: 400 }
-        );
+        throw new ValidationError("Invalid screenshot format. Must be valid base64.");
       }
       if (decoded.length > 5 * 1024 * 1024) {
-        return NextResponse.json(
-          { error: "Screenshot too large. Must be under 5MB." },
-          { status: 400 }
-        );
+        throw new ValidationError("Screenshot too large. Must be under 5MB.");
       }
     }
 
@@ -331,14 +349,15 @@ export async function POST(req: NextRequest) {
 
     if (fetchReason && !pageText) {
       console.error(`Audit Failed: ${fetchReason}`);
-      return NextResponse.json(await attachSavedAuditId(validUrl, fallbackResult, userId));
+      const finalized = await attachSavedAuditId(validUrl, fallbackResult, userId);
+      return NextResponse.json({ success: true, data: finalized });
     }
 
     // Check for cached audit (within last 1 hour)
     const cachedAudit = await getCachedAudit(validUrl);
     if (cachedAudit) {
       console.log(`[Audit API] Returning cached audit for ${validUrl}`);
-      return NextResponse.json(cachedAudit);
+      return NextResponse.json({ success: true, data: cachedAudit as unknown as AuditResponse });
     }
 
     // Resolve AI Models
@@ -347,7 +366,8 @@ export async function POST(req: NextRequest) {
 
     if (!visionModel) {
       console.error("No AI models configured! Check your keys.");
-      return NextResponse.json(await attachSavedAuditId(validUrl, fallbackResult, userId));
+      const finalized = await attachSavedAuditId(validUrl, fallbackResult, userId);
+      return NextResponse.json({ success: true, data: finalized });
     }
 
     // Run Analysis via AuditService
@@ -366,9 +386,11 @@ export async function POST(req: NextRequest) {
       );
 
       // Save and Return
+      const finalized = await attachSavedAuditId(validUrl, auditResult, userId);
       const duration = ((Date.now() - startTime) / 1000).toFixed(2);
       console.log(`[Audit API] Analysis complete in ${duration}s`);
-      return NextResponse.json(await attachSavedAuditId(validUrl, auditResult, userId));
+      
+      return NextResponse.json({ success: true, data: finalized });
 
     } catch (llmError: unknown) {
       console.error("[Analysis Error]", llmError);
@@ -379,12 +401,11 @@ export async function POST(req: NextRequest) {
         warning: `AI Analysis failed: ${getErrorMessage(llmError)}. Showing deterministic metrics only.`
       };
       
-      return NextResponse.json(await attachSavedAuditId(validUrl, errorResult, userId));
+      const finalized = await attachSavedAuditId(validUrl, errorResult, userId);
+      return NextResponse.json({ success: true, data: finalized });
     }
   } catch (error) {
     console.error("Audit API Error:", error);
-    const errorMessage =
-      error instanceof Error ? error.message : "Failed to analyze the app.";
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return createErrorResponse(error);
   }
 }

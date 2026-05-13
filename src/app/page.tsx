@@ -9,6 +9,7 @@ import { BarChart3, CheckCircle2, Sparkles, Copy, BadgeCheck, Settings, ShieldCh
 import { AuditForm } from "@/components/audit-form";
 import { checks, previewFixes, steps, loadingSteps } from "@/lib/constants";
 import { normalizeAuditUrl } from "@/lib/audit-helpers";
+import type { ApiResponse, AuditResponse } from "@/types/audit";
 import {
   Card,
   CardDescription,
@@ -30,6 +31,7 @@ export default function Home() {
   const [codeKey, setCodeKey] = useState("");
   const [keysSaved, setKeysSaved] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [force, setForce] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const { isSignedIn } = useUser();
@@ -118,6 +120,7 @@ export default function Home() {
       
       if (visionKey.trim()) formData.append("visionKey", visionKey.trim());
       if (codeKey.trim()) formData.append("codeKey", codeKey.trim());
+      if (force) formData.append("force", "true");
 
       for (let i = 0; i < screenshots.length; i++) {
         const reader = new FileReader();
@@ -134,13 +137,19 @@ export default function Home() {
         signal: abortRef.current?.signal,
       });
 
-      const data = await res.json().catch(() => null);
-      if (!res.ok) {
+      const data: ApiResponse<AuditResponse> = await res.json().catch(() => null);
+      
+      if (!res.ok || !data || !data.success) {
         throw new Error(data?.error || "Audit request failed.");
       }
 
+      const auditResult = data.data;
+      if (!auditResult) {
+        throw new Error("No audit data received from server.");
+      }
+
       // If AI failed but we have fallback data, warn the user
-      if (data.warning && (data.lighthouse || data.backendMetrics)) {
+      if (auditResult.warning && (auditResult.lighthouse || auditResult.backendMetrics)) {
         toast.warning("AI Quota exceeded. Using automated tools for report.", {
           duration: 6000,
           description: "Deterministic analysis is active, but visual AI audit was skipped.",
@@ -149,7 +158,7 @@ export default function Home() {
 
       localStorage.setItem(
         "medo_audit_result",
-        JSON.stringify({ ...data, auditedUrl: submittedUrl })
+        JSON.stringify({ ...auditResult, auditedUrl: submittedUrl })
       );
       router.push("/audit");
     } catch (error: unknown) {
@@ -276,6 +285,8 @@ export default function Home() {
               keysSaved={keysSaved}
               isSaving={isSaving}
               onSaveSettings={handleSaveSettings}
+              force={force}
+              setForce={setForce}
             />
           </div>
 

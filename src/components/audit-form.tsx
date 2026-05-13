@@ -40,6 +40,8 @@ interface AuditFormProps {
   keysSaved: boolean;
   isSaving: boolean;
   onSaveSettings: () => void;
+  force: boolean;
+  setForce: (f: boolean) => void;
 }
 
 export function AuditForm({
@@ -63,7 +65,9 @@ export function AuditForm({
   setCodeKey,
   keysSaved,
   isSaving,
-  onSaveSettings
+  onSaveSettings,
+  force,
+  setForce
 }: AuditFormProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -133,6 +137,23 @@ export function AuditForm({
                <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-500">
                  <strong>Tip:</strong> Go to Settings page to save API keys securely for future use.
                </div>
+
+               {/* Cache Bypass */}
+               <div className="flex items-center gap-3 rounded-lg border border-border/50 bg-muted/20 p-3">
+                 <input
+                   type="checkbox"
+                   id="force-audit"
+                   checked={force}
+                   onChange={(e) => setForce(e.target.checked)}
+                   className="h-4 w-4 rounded border-border/50 bg-background text-cyan-500 focus:ring-cyan-500/50"
+                 />
+                 <label htmlFor="force-audit" className="flex flex-col gap-0.5 cursor-pointer">
+                   <span className="text-sm font-semibold text-foreground">Force fresh audit</span>
+                   <span className="text-[10px] text-muted-foreground">Bypass cached results and scan the live site immediately</span>
+                 </label>
+               </div>
+
+               <hr className="border-border/50" />
 
                {/* Vision Provider */}
                <div className="space-y-3">

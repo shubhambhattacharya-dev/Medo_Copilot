@@ -58,6 +58,9 @@ async function ensureAuditTable() {
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='audits' AND column_name='user_id') THEN
         ALTER TABLE audits ADD COLUMN user_id text;
       END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='audits' AND column_name='warning') THEN
+        ALTER TABLE audits ADD COLUMN warning text;
+      END IF;
     END
     $$;
   `;

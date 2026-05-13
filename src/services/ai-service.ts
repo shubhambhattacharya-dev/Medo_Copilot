@@ -40,10 +40,11 @@ export class AiService {
         const key = apiKey || process.env.GROQ_API_KEY;
         if (!key) return null;
         const customGroq = createGroq({ apiKey: key });
-        // Use llama-4-scout for vision (supports image understanding)
+        // Try llama-4-scout first, fallback to llama-3.2-90b-vision
+        const modelName = process.env.GROQ_VISION_MODEL || "llama-3.2-90b-vision-preview";
         return {
           name: "groq",
-          model: customGroq("meta-llama/llama-4-scout-17b-16e-instruct"),
+          model: customGroq(modelName),
           supportsSchema: false,
           supportsVision: true
         };

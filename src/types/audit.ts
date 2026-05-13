@@ -90,6 +90,7 @@ export type BackendMetrics = {
 };
 
 export type AuditResponse = z.infer<typeof ResultSchema> & {
+  auditId?: string;
   frontendScore?: number;
   backendScore?: number;
   analysisMode?: string;
@@ -97,6 +98,18 @@ export type AuditResponse = z.infer<typeof ResultSchema> & {
   lighthouse?: LighthouseMetrics;
   backendMetrics?: BackendMetrics;
   warning?: string;
+  auditedUrl?: string;
+};
+
+/**
+ * Standardized API response format for the entire application.
+ */
+export type ApiResponse<T> = {
+  success: boolean;
+  data?: T;
+  error?: string;
+  code?: string; // Machine-readable error code
+  retryAfter?: number; // Seconds to wait before retrying (for 429)
 };
 
 export type PageSignals = {

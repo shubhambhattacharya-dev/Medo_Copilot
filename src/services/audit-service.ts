@@ -158,65 +158,72 @@ OUTPUT (JSON)
       finalScreenshots.push(lighthouseMetrics.screenshot);
     }
 
-    // 2. Vision Analysis with Fallback
+    // 2. Vision Analysis with Multi-Provider Fallback Chain
     let visionTaskRes = null;
     let currentVisionProvider = visionProvider;
+    const visionErrors: string[] = [];
 
-    const supportsVision = currentVisionProvider.supportsVision && finalScreenshots.length > 0;
+    // Try all available vision providers in sequence
+    const visionProviders = [
+      visionProvider,
+      AiService.getVisionModel("groq"),
+      AiService.getVisionModel("gemini"),
+      AiService.getVisionModel("default"),
+    ].filter((p): p is AiProvider => p !== null);
 
-    visionTaskRes = await safeTask(generateText({
-      model: currentVisionProvider.model,
-      system: "You are a specialized audit agent. You MUST only output valid JSON. Do not include any preamble, explanation, or conversational text. Ensure all strings are properly escaped and the JSON structure is strictly followed.",
-      messages: [
-        {
-          role: "user",
-          content: [
-            { 
-              type: "text", 
-              text: this.getFrontendPrompt(
-                contextData.url, 
-                contextData.title, 
-                contextData.text, 
-                contextData.signals, 
-                supportsVision
-              ) 
-            },
-            ...(supportsVision 
-              ? finalScreenshots.map(s => ({ 
-                  type: "image" as const, 
-                  image: Buffer.from(s, "base64"), 
-                  mediaType: "image/png" as const 
-                })) 
-              : [])
-          ]
-        }
-      ]
-    }), `Vision (${currentVisionProvider.name})`);
+    for (const provider of visionProviders) {
+      if (visionTaskRes) break;
+      
+      currentVisionProvider = provider;
+      const supportsVision = currentVisionProvider.supportsVision && finalScreenshots.length > 0;
 
-    // Fallback if primary vision failed and it wasn't already a default
-    if (!visionTaskRes && currentVisionProvider.name !== "gemini") {
-      console.log("[Audit Service] Primary vision failed, trying fallback (Gemini)...");
-      const fallbackVision = AiService.getVisionModel("gemini");
-      if (fallbackVision) {
-        currentVisionProvider = fallbackVision;
-        const fbSupportsVision = currentVisionProvider.supportsVision && finalScreenshots.length > 0;
-        
-        visionTaskRes = await safeTask(generateText({
-          model: currentVisionProvider.model,
-          messages: [
-            {
-              role: "user",
-              content: [
-                { 
-                  type: "text", 
-                  text: this.getFrontendPrompt(
-                    contextData.url, 
-                    contextData.title, 
-                    contextData.text, 
-                    contextData.signals, 
-                    fbSupportsVision
-                  ) 
-                },
+      console.log(`[Audit Service] Trying vision provider: ${currentVisionProvider.name}`);
+      
+      const result = await safeTask(generateText({
+        model: currentVisionProvider.model,
+        system: "You are a specialized audit agent. You MUST only output valid JSON. Do not include any preamble, explanation, or conversational text. Ensure all strings are properly escaped and the JSON structure is strictly followed.",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { 
+                type: "text", 
+                text: this.getFrontendPrompt(
+                  contextData.url, 
+                  contextData.title, 
+                  contextData.text, 
+                  contextData.signals, 
+                  supportsVision
+                ) 
+              },
+              ...(supportsVision 
+                ? finalScreenshots.map(s => ({ 
+                    type: "image" as const, 
+                    image: Buffer.from(s, "base64"), 
+                    mediaType: "image/png" as const 
+                  })) 
+                : [])
+            ]
+          }
+        ]
+      }), `Vision (${currentVisionProvider.name})`);
+
+      if (result) {
+        visionTaskRes = result;
+        console.log(`[Audit Service] Vision succeeded with: ${currentVisionProvider.name}`);
+        break;
+      } else {
+        visionErrors.push(currentVisionProvider.name);
+        console.log(`[Audit Service] Vision failed with: ${currentVisionProvider.name}, trying next...`);
+      }
+    }
+
+    if (!visionTaskRes) {
+      console.error(`[Audit Service] All vision providers failed: ${visionErrors.join(", ")}`);
+    }
+
+    // Legacy fallback removed - using chain above instead
+    if (visionTaskRes && currentVisionProvider.name !== "gemini") {
                 ...(fbSupportsVision 
                   ? finalScreenshots.map(s => ({ 
                       type: "image" as const, 
