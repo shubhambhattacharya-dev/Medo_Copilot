@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { toast } from "sonner";
 import { UserButton, useUser } from "@clerk/nextjs";
-import { BarChart3, CheckCircle2, Sparkles, Copy, BadgeCheck, Settings } from "lucide-react";
+import { BarChart3, CheckCircle2, Sparkles, Copy, BadgeCheck, Settings, ShieldCheck } from "lucide-react";
 import { AuditForm } from "@/components/audit-form";
 import { checks, previewFixes, steps, loadingSteps } from "@/lib/constants";
 import { normalizeAuditUrl } from "@/lib/audit-helpers";
@@ -202,8 +202,8 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-3">
             <div className="hidden items-center gap-2 rounded-full border border-border/70 bg-muted/50 px-3 py-1 text-xs text-muted-foreground md:flex">
-              <BadgeCheck className="h-3.5 w-3.5 text-emerald-500" />
-              Trusted by builders shipping faster
+              <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
+              Professional Grade Audit Pipeline
             </div>
             
             {isSignedIn ? (

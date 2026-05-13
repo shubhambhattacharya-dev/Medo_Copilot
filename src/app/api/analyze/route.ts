@@ -271,7 +271,7 @@ export async function POST(req: NextRequest) {
           const html = await page.content();
           const $ = cheerio.load(html);
           pageSignals = getPageSignals($);
-          pageTitle = pageSignals.title;
+          pageTitle = pageSignals.title || parsedUrl.hostname;
           pageText = pageSignals.text.substring(0, 8000);
         } catch (navErr: unknown) {
           console.warn("Browser navigation failed, attempting static fetch fallback:", navErr);
@@ -298,7 +298,7 @@ export async function POST(req: NextRequest) {
 
           const $ = cheerio.load(html);
           pageSignals = getPageSignals($);
-          pageTitle = pageSignals.title;
+          pageTitle = pageSignals.title || parsedUrl.hostname;
           pageText = pageSignals.text.substring(0, 8000);
           
           // CRITICAL: Clear reason because we successfully got content!

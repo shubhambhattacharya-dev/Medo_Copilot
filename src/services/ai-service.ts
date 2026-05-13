@@ -24,8 +24,9 @@ export class AiService {
         const customGoogle = createGoogleGenerativeAI({ apiKey: key });
         const envModel = process.env.GOOGLE_GENERATIVE_AI_MODEL;
         const modelName = (envModel === "gemini-1.5-flash" || !envModel || envModel === "gemini-1.5-flash-latest") 
-          ? "gemini-2.0-flash" 
+          ? "gemini-2.0-flash-exp" 
           : envModel;
+
         
         return {
           name: "gemini",
