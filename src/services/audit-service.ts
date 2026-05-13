@@ -1,4 +1,4 @@
-import { generateText } from "ai";
+import { generateText, type ImagePart } from "ai";
 import { AiProvider, AiService } from "./ai-service";
 import type { AuditResponse, LighthouseMetrics, BackendMetrics, PageSignals, AuditIssue } from "@/types/audit";
 import { StaticAnalyzer } from "@/lib/static-analyzer";
@@ -197,11 +197,14 @@ OUTPUT (JSON)
                 ) 
               },
               ...(supportsVision 
-                ? finalScreenshots.map(s => ({ 
-                    type: "image" as const, 
-                    image: Buffer.from(s, "base64"), 
-                    mediaType: "image/png" as const 
-                  })) 
+                ? finalScreenshots.map(s => {
+                    const imgPart: ImagePart = { 
+                      type: "image", 
+                      image: Buffer.from(s, "base64"), 
+                      mediaType: "image/png" 
+                    };
+                    return imgPart;
+                  }) 
                 : [])
             ]
           }
