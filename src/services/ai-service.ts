@@ -2,6 +2,7 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createGroq } from "@ai-sdk/groq";
 import { createOpenAI } from "@ai-sdk/openai";
 import { LanguageModel } from "ai";
+import { MODEL_UPGRADES, DEFAULT_MODELS } from "@/lib/constants";
 
 export type AiProviderName = "gemini" | "groq" | "openrouter" | "tencent" | "poolside" | "nvidia" | "mimo";
 
@@ -16,17 +17,20 @@ export interface AiProvider {
  * Service to initialize AI providers with custom or default keys
  */
 export class AiService {
+  private static resolveModelName(provider: string, envModel?: string): string {
+    if (envModel && MODEL_UPGRADES[envModel]) {
+      return MODEL_UPGRADES[envModel];
+    }
+    return envModel || DEFAULT_MODELS[provider] || "unknown";
+  }
+
   private static getProviderModel(providerName: string, apiKey: string | null): AiProvider | null {
     try {
       if (providerName === "gemini") {
         const key = apiKey || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
         if (!key) return null;
         const customGoogle = createGoogleGenerativeAI({ apiKey: key });
-        const envModel = process.env.GOOGLE_GENERATIVE_AI_MODEL;
-        const modelName = (envModel === "gemini-1.5-flash" || !envModel || envModel === "gemini-1.5-flash-latest") 
-          ? "gemini-2.0-flash" 
-          : envModel;
-
+        const modelName = this.resolveModelName("gemini", process.env.GOOGLE_GENERATIVE_AI_MODEL);
         
         return {
           name: "gemini",
@@ -40,12 +44,12 @@ export class AiService {
         const key = apiKey || process.env.GROQ_API_KEY;
         if (!key) return null;
         const customGroq = createGroq({ apiKey: key });
-        // Try llama-4-scout first, fallback to llama-3.2-90b-vision
-        const modelName = process.env.GROQ_VISION_MODEL || "llama-4-scout-17b-16e-instruct";
+        const modelName = this.resolveModelName("groq", process.env.GROQ_VISION_MODEL);
+
         return {
           name: "groq",
           model: customGroq(modelName),
-          supportsSchema: false,
+          supportsSchema: true, // Modern Groq models support tool calling / JSON mode
           supportsVision: true
         };
       } 
@@ -54,9 +58,10 @@ export class AiService {
         const key = apiKey || process.env.OPENROUTER_API_KEY;
         if (!key) return null;
         const customOpenRouter = createOpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey: key });
+        const modelName = this.resolveModelName("openrouter");
         return {
           name: "openrouter",
-          model: customOpenRouter("anthropic/claude-3.5-sonnet"),
+          model: customOpenRouter(modelName),
           supportsSchema: false,
           supportsVision: true
         };
@@ -66,9 +71,10 @@ export class AiService {
         const key = apiKey || process.env.TENCENT_API || process.env.OPENROUTER_API_KEY;
         if (!key) return null;
         const customTencent = createOpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey: key });
+        const modelName = this.resolveModelName("tencent");
         return {
           name: "tencent",
-          model: customTencent("tencent/hunyuan-a13b-instruct"),
+          model: customTencent(modelName),
           supportsSchema: false,
           supportsVision: false
         };
@@ -78,9 +84,10 @@ export class AiService {
         const key = apiKey || process.env.POOLSIDE_API || process.env.OPENROUTER_API_KEY;
         if (!key) return null;
         const customPoolside = createOpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey: key });
+        const modelName = this.resolveModelName("poolside");
         return {
           name: "poolside",
-          model: customPoolside("poolside/laguna-m-1"),
+          model: customPoolside(modelName),
           supportsSchema: false,
           supportsVision: false
         };
@@ -90,9 +97,10 @@ export class AiService {
         const key = apiKey || process.env.NVIDIA_API || process.env.OPENROUTER_API_KEY;
         if (!key) return null;
         const customNvidia = createOpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey: key });
+        const modelName = this.resolveModelName("nvidia");
         return {
           name: "nvidia",
-          model: customNvidia("nvidia/llama-3.1-nemotron-70b-instruct"),
+          model: customNvidia(modelName),
           supportsSchema: false,
           supportsVision: false
         };
@@ -101,12 +109,11 @@ export class AiService {
       if (providerName === "mimo") {
         const key = apiKey || process.env.XOMINI_MIMO_API;
         if (!key) return null;
-        // Assuming MIMO is another OpenRouter-compatible or custom provider
-        // If it's a specific custom one, we'd need more info, but let's try OpenRouter style
         const customMimo = createOpenAI({ baseURL: "https://api.mimo.ai/v1", apiKey: key });
+        const modelName = this.resolveModelName("mimo");
         return {
           name: "mimo",
-          model: customMimo("mimo-1"),
+          model: customMimo(modelName),
           supportsSchema: false,
           supportsVision: false
         };

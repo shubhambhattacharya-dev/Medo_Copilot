@@ -11,6 +11,52 @@ export const AI_PROVIDERS = [
   { value: "mimo", label: "Mimo AI", hint: "Alternative high-performance model" },
 ];
 
+/**
+ * Centralized Model Mappings
+ * Handles decommissioning and upgrades in one place.
+ */
+export const MODEL_UPGRADES: Record<string, string> = {
+  // Gemini
+  "gemini-1.5-flash": "gemini-2.0-flash",
+  "gemini-1.5-flash-latest": "gemini-2.0-flash",
+  "gemini-2.0-flash-exp": "gemini-2.0-flash",
+  
+  // Groq
+  "llama-3.2-90b-vision-preview": "llama-4-scout-17b-16e-instruct",
+};
+
+export const DEFAULT_MODELS: Record<string, string> = {
+  gemini: "gemini-2.0-flash",
+  groq: "llama-4-scout-17b-16e-instruct",
+  openrouter: "anthropic/claude-3.5-sonnet",
+  tencent: "tencent/hunyuan-a13b-instruct",
+  poolside: "poolside/laguna-m-1",
+  nvidia: "nvidia/llama-3.1-nemotron-70b-instruct",
+  mimo: "mimo-1",
+};
+
+/**
+ * Scoring Weights
+ * Adjust these to tune how "strict" the audit is.
+ */
+export const SCORING_WEIGHTS = {
+  // Frontend: AI vs Deterministic (Lighthouse)
+  frontend: {
+    ai: 0.6,
+    lighthouse: 0.4
+  },
+  // Backend: AI vs Deterministic (Static Analysis)
+  backend: {
+    ai: 0.6,
+    static: 0.4
+  },
+  // Overall: Frontend vs Backend
+  overall: {
+    frontend: 0.5,
+    backend: 0.5
+  }
+};
+
 export const checks = [
   {
     title: "Trust signals",

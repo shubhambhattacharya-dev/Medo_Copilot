@@ -3,6 +3,7 @@ import { AiProvider, AiService } from "./ai-service";
 import type { AuditResponse, LighthouseMetrics, BackendMetrics, PageSignals, AuditIssue } from "@/types/audit";
 import { StaticAnalyzer } from "@/lib/static-analyzer";
 import { mergeIssues, parseJsonFromText, buildRuleIssues, buildMeasuredResult } from "@/lib/audit-helpers";
+import { SCORING_WEIGHTS } from "@/lib/constants";
 
 export class AuditService {
   static getFrontendPrompt(validUrl: string, pageTitle: string, pageText: string, pageSignals: PageSignals, supportsVision: boolean) {
@@ -395,12 +396,21 @@ OUTPUT (JSON)
     // Use mergeIssues to deduplicate between vision and code issues
     const allIssues = mergeIssues(vision?.issues || [], code?.issues || []);
 
-    // Scoring Logic - More favorable for launch readiness
+    // Scoring Logic using Centralized Weights
     const lhAvg = lighthouse ? Math.round((lighthouse.performance + lighthouse.accessibility + lighthouse.bestPractices + lighthouse.seo) / 4) : 0;
     const beAvg = backendMetrics ? Math.round((backendMetrics.security + backendMetrics.codeQuality + backendMetrics.maintainability) / 3) : 0;
 
-    let frontendScore = vision ? Math.round(vision.launchScore * 0.6 + lhAvg * 0.4) : lhAvg;
-    let backendScore = code ? Math.round(code.launchScore * 0.6 + beAvg * 0.4) : beAvg;
+    const fw = SCORING_WEIGHTS.frontend;
+    const bw = SCORING_WEIGHTS.backend;
+    const ow = SCORING_WEIGHTS.overall;
+
+    let frontendScore = vision 
+      ? Math.round(vision.launchScore * fw.ai + lhAvg * fw.lighthouse) 
+      : lhAvg;
+      
+    let backendScore = code 
+      ? Math.round(code.launchScore * bw.ai + beAvg * bw.static) 
+      : beAvg;
 
     // Boost scores if automated tools show good results (no severe issues)
     if (lighthouse && allIssues.filter(i => i.severity === "high").length === 0) {
@@ -425,7 +435,7 @@ OUTPUT (JSON)
 
     const finalScore = Math.round(
       backendMetrics 
-        ? (frontendScore * 0.5 + backendScore * 0.5) 
+        ? (frontendScore * ow.frontend + backendScore * ow.backend) 
         : frontendScore
     );
 
