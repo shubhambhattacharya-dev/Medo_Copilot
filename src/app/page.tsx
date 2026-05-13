@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { toast } from "sonner";
 import { UserButton, useUser } from "@clerk/nextjs";
-import { BarChart3, CheckCircle2, Sparkles, Copy, BadgeCheck, Settings, ShieldCheck } from "lucide-react";
+import { BarChart3, CheckCircle2, Sparkles, Copy, Settings, ShieldCheck } from "lucide-react";
 import { AuditForm } from "@/components/audit-form";
 import { checks, previewFixes, steps, loadingSteps } from "@/lib/constants";
 import { normalizeAuditUrl } from "@/lib/audit-helpers";
@@ -16,7 +16,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 
 export default function Home() {
   const router = useRouter();

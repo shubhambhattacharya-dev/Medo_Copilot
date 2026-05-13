@@ -180,10 +180,9 @@ export default function AuditPage() {
   }>({ status: "loading", result: null, errorMsg: "" });
   
   const [currentDate, setCurrentDate] = useState("");
-  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCurrentDate(new Date().toLocaleDateString());
 
     try {
@@ -378,7 +377,7 @@ export default function AuditPage() {
               </div>
               <div className="space-y-1">
                 <p className="text-[11px] font-bold text-red-400 uppercase tracking-tighter">Cons</p>
-                <p className="text-xs text-muted-foreground leading-5">Subject to API quota limits, slower inference, and rare "hallucinations" (seeing things that aren't there).</p>
+                <p className="text-xs text-muted-foreground leading-5">Subject to API quota limits, slower inference, and rare &quot;hallucinations&quot; (seeing things that aren&apos;t there).</p>
               </div>
             </div>
           </div>
@@ -395,7 +394,7 @@ export default function AuditPage() {
               </div>
               <div className="space-y-1">
                 <p className="text-[11px] font-bold text-red-400 uppercase tracking-tighter">Cons</p>
-                <p className="text-xs text-muted-foreground leading-5">Cannot judge "vibe" or design quality, lacks context on user intent, and limited to predefined rules.</p>
+                <p className="text-xs text-muted-foreground leading-5">Cannot judge &quot;vibe&quot; or design quality, lacks context on user intent, and limited to predefined rules.</p>
               </div>
             </div>
           </div>

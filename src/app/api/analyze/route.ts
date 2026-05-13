@@ -6,7 +6,7 @@ import { fetchGithubRepoCode } from "@/lib/github";
 import { auth } from "@clerk/nextjs/server";
 import { AiService } from "@/services/ai-service";
 import { AuditService } from "@/services/audit-service";
-import { checkRateLimitAsync, rateLimitResponse } from "@/lib/rate-limit";
+import { checkRateLimitAsync } from "@/lib/rate-limit";
 import { StaticAnalyzer } from "@/lib/static-analyzer";
 import {
   getPageSignals,
@@ -23,13 +23,11 @@ import {
   AuditError,
   ValidationError,
   RateLimitError,
-  BrowserError,
-  AIProviderError,
 } from "@/lib/custom-errors";
 
 // ... rest of imports ...
 
-function createErrorResponse(error: unknown): NextResponse<ApiResponse<any>> {
+function createErrorResponse(error: unknown): NextResponse<ApiResponse<AuditResponse>> {
   if (error instanceof AuditError) {
     return NextResponse.json(
       { success: false, error: error.message, code: error.code, retryAfter: error.status === 429 ? 60 : undefined },
@@ -297,7 +295,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<A
         } finally {
           await context.close().catch(() => {});
         }
-      } catch (browserError: unknown) {
+      } catch {
         console.log("Browser unavailable or failed, using static fetch fallback...");
         try {
           const res = await fetch(fetchUrl, {

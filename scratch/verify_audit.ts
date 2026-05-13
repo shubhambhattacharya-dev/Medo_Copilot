@@ -1,11 +1,10 @@
 import dotenv from 'dotenv';
 dotenv.config({ path: '.env.local' });
 
-import { AiService } from '../src/services/ai-service';
 import { buildRuleIssues, buildMeasuredResult } from '../src/lib/audit-helpers';
-import { FRONTEND_CATEGORIES } from '../src/types/audit';
+import type { PageSignals } from '../src/types/audit';
 
-async function testScenario(name: string, signals: any) {
+async function testScenario(name: string, signals: PageSignals) {
   console.log(`\n--- Testing Scenario: ${name} ---`);
   
   const issues = buildRuleIssues(signals);

@@ -10,10 +10,8 @@ import {
   Key, 
   ShieldCheck, 
   Loader2, 
-  ArrowRight,
-  Sparkles
+  ArrowRight
 } from "lucide-react";
-import { SignInButton } from "@clerk/nextjs";
 import { AI_PROVIDERS, loadingSteps } from "@/lib/constants";
 
 interface AuditFormProps {
@@ -105,7 +103,7 @@ export function AuditForm({
           </label>
         </div>
         <p className="px-1 text-[10px] text-muted-foreground">
-          Tip: 1-3 screenshots of different pages work best. If omitted, we'll try to capture them automatically.
+          Tip: 1-3 screenshots of different pages work best. If omitted, we&apos;ll try to capture them automatically.
         </p>
         <Input
           type="text"

@@ -117,7 +117,7 @@ OUTPUT (JSON)
         seo: Math.round((categories.seo?.score || 0) * 100),
         screenshot,
       };
-    } catch (err) {
+    } catch {
       clearTimeout(timeoutId);
       return null;
     }

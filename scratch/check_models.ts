@@ -10,16 +10,16 @@ async function listModels() {
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     const result = await model.generateContent("Hi");
     console.log("Success with gemini-1.5-flash:", result.response.text());
-  } catch (err: any) {
-    console.error("Failed with gemini-1.5-flash:", err.message);
+  } catch (err: unknown) {
+    console.error("Failed with gemini-1.5-flash:", (err as Error).message);
   }
 
   try {
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
     const result = await model.generateContent("Hi");
     console.log("Success with gemini-1.5-flash-latest:", result.response.text());
-  } catch (err: any) {
-    console.error("Failed with gemini-1.5-flash-latest:", err.message);
+  } catch (err: unknown) {
+    console.error("Failed with gemini-1.5-flash-latest:", (err as Error).message);
   }
 }
 
