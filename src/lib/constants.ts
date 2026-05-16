@@ -101,7 +101,7 @@ export const steps = [
 
 export const loadingSteps = [
   "Fetching page content...",
-  "Capturing screenshots...",
+  "Capturing desktop and mobile screenshots...",
   "Running AI analysis...",
   "Checking trust signals...",
   "Evaluating mobile layout...",

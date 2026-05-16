@@ -11,7 +11,10 @@ export class StaticAnalyzer {
       return { security: 0, codeQuality: 0, maintainability: 0 };
     }
 
-    const files = githubCodeText.split(/=== FILE:.*?===/g).filter(Boolean);
+    const files = githubCodeText
+      .split(/(?:===\s*FILE:.*?===|---\s*File:.*?---)/gi)
+      .map((file) => file.trim())
+      .filter(Boolean);
     const totalFiles = files.length || 1;
 
     let securityScore = 100;
@@ -21,7 +24,7 @@ export class StaticAnalyzer {
     // ─── 1. SECURITY CHECKS (Weight: Heavy penalties) ───
     
     // Check 1: Hardcoded Secrets
-    const secretRegex = /['"](sk_test_|sk_live_|pk_|ghp_|AKIA|AIza|eyJ)[a-zA-Z0-9_-]{10,}['"]/g;
+    const secretRegex = /['"]((?:sk_(?:test|live)_|rk_(?:test|live)_|pk_live_|ghp_|gho_|github_pat_|AKIA|AIza|xox[baprs]-|eyJ)[a-zA-Z0-9_./+=:-]{10,})['"]/g;
     const secretsFound = (githubCodeText.match(secretRegex) || []).length;
     securityScore -= Math.min(secretsFound * 25, 60);
 
@@ -30,10 +33,24 @@ export class StaticAnalyzer {
       securityScore -= 10;
     }
 
+    const envUsages = (githubCodeText.match(/process\.env\.[A-Z0-9_]+/g) || []).length;
+    const hasEnvValidation = /z\.object\(|safeParse\(|parse\(\s*process\.env|envsafe|envalid|createEnv/i.test(githubCodeText);
+    if (envUsages > 2 && !hasEnvValidation) {
+      securityScore -= 8;
+    }
+
     // Check 3: Dangerous usage
-    const dangerousRegex = /(eval\(|exec\(|dangerouslySetInnerHTML)/g;
+    const dangerousRegex = /\b(eval|exec)\s*\(|dangerouslySetInnerHTML|innerHTML\s*=|new Function\s*\(/g;
     const dangerousFound = (githubCodeText.match(dangerousRegex) || []).length;
     securityScore -= Math.min(dangerousFound * 15, 30);
+
+    // Check 4: Request parsing without obvious validation
+    const parsesRequestBody = /req\.json\(|request\.json\(|formData\(/g.test(githubCodeText);
+    const validatesInput = /safeParse\(|z\.object\(|joi\.|yup\.|valibot|superstruct/i.test(githubCodeText);
+    if (parsesRequestBody && !validatesInput) {
+      securityScore -= 10;
+      qualityScore -= 10;
+    }
 
     // ─── 2. CODE QUALITY CHECKS ───
     

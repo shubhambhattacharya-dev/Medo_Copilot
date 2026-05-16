@@ -33,10 +33,12 @@ export default function Home() {
   const [force, setForce] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const { isSignedIn } = useUser();
+  const { isLoaded: userLoaded, isSignedIn } = useUser();
 
   // Fetch user settings on mount
   useEffect(() => {
+    if (!userLoaded || !isSignedIn) return;
+
     fetch("/api/user/settings")
       .then(res => res.ok ? res.json() : { error: "Failed to fetch settings" })
       .then(data => {
@@ -47,7 +49,7 @@ export default function Home() {
         }
       })
       .catch(console.error);
-  }, []);
+  }, [userLoaded, isSignedIn]);
 
   // Cleanup on unmount
   useEffect(() => {

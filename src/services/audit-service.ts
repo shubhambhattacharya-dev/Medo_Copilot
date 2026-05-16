@@ -1,8 +1,8 @@
-import { generateText, type ImagePart } from "ai";
+import { generateObject, generateText, type ImagePart } from "ai";
 import { AiProvider, AiService } from "./ai-service";
-import type { AuditResponse, LighthouseMetrics, BackendMetrics, PageSignals, AuditIssue } from "@/types/audit";
+import { ResultSchema, type AuditResponse, type LighthouseMetrics, type BackendMetrics, type PageSignals, type AuditIssue } from "@/types/audit";
 import { StaticAnalyzer } from "@/lib/static-analyzer";
-import { mergeIssues, parseJsonFromText, buildRuleIssues, buildMeasuredResult } from "@/lib/audit-helpers";
+import { mergeIssues, parseJsonFromText, buildRuleIssues, buildMeasuredResult, getVerdict } from "@/lib/audit-helpers";
 import { SCORING_WEIGHTS } from "@/lib/constants";
 
 export class AuditService {
@@ -51,7 +51,7 @@ Title: ${pageTitle}
 Content: ${pageText.substring(0, 4000)}
 
 ${supportsVision
-        ? `You have SCREENSHOTS attached. Use them to evaluate: visual hierarchy, CTA prominence, color scheme, mobile readability, layout quality, and empty states.`
+        ? `You have SCREENSHOTS attached. They may include desktop and mobile captures. Use them to evaluate visual hierarchy, CTA prominence, color contrast, mobile readability, layout quality, and empty states. If a finding is based only on text and not visible evidence, mark confidence as medium or low.`
         : `TEXT-ONLY mode. Focus on: copy quality, CTA phrasing, trust signal keywords.`
       }
 Measured signals:
@@ -59,6 +59,64 @@ Measured signals:
 - CTA/link labels found: ${pageSignals.ctas?.join(", ") || "NONE DETECTED"}
 - Total links: ${pageSignals.links?.length || 0}
 `;
+  }
+
+  private static imagePartsFromBase64(screenshots: string[]): ImagePart[] {
+    return screenshots.map((s): ImagePart => ({
+      type: "image",
+      image: Buffer.from(s, "base64"),
+      mediaType: "image/png"
+    }));
+  }
+
+  private static async generateStructuredAudit({
+    provider,
+    prompt,
+    screenshots = [],
+    supportsVision = false,
+    taskName,
+  }: {
+    provider: AiProvider;
+    prompt: string;
+    screenshots?: string[];
+    supportsVision?: boolean;
+    taskName: string;
+  }): Promise<AuditResponse> {
+    const system = [
+      "You are a specialized launch-readiness audit agent.",
+      "Return only findings that are supported by visible screenshots, extracted page text, measured signals, or source code evidence.",
+      "Do not invent sections, features, metrics, testimonials, or code paths that are not present in the supplied evidence.",
+      "Use low confidence when evidence is indirect. Use high severity only for issues that clearly block launch readiness.",
+    ].join(" ");
+
+    const content = [
+      { type: "text" as const, text: prompt },
+      ...(supportsVision ? this.imagePartsFromBase64(screenshots) : []),
+    ];
+
+    try {
+      const result = await generateObject({
+        model: provider.model,
+        schema: ResultSchema,
+        system,
+        messages: [{ role: "user", content }],
+        temperature: 0.2,
+      });
+
+      return result.object;
+    } catch (structuredError) {
+      const msg = structuredError instanceof Error ? structuredError.message : String(structuredError);
+      console.warn(`[Audit Service] Structured ${taskName} output failed for ${provider.name}, falling back to JSON text: ${msg}`);
+
+      const textResult = await generateText({
+        model: provider.model,
+        system: `${system} You MUST output one valid JSON object matching the requested schema. No markdown, no preamble.`,
+        messages: [{ role: "user", content }],
+        temperature: 0.2,
+      });
+
+      return parseJsonFromText(textResult.text);
+    }
   }
 
   static getBackendPrompt(githubCodeText: string) {
@@ -97,7 +155,7 @@ OUTPUT (JSON)
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     try {
-      const key = process.env.PAGESPEED_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+      const key = process.env.PAGESPEED_API_KEY;
       const endpoint = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&category=PERFORMANCE&category=ACCESSIBILITY&category=BEST_PRACTICES&category=SEO${key ? `&key=${key}` : ""}`;
       const res = await fetch(endpoint, { next: { revalidate: 3600 }, signal: controller.signal });
       clearTimeout(timeoutId);
@@ -160,7 +218,7 @@ OUTPUT (JSON)
     }
 
     // 2. Vision Analysis with Multi-Provider Fallback Chain
-    let visionTaskRes = null;
+    let visionResult: AuditResponse | null = null;
     let currentVisionProvider = visionProvider;
     const visionErrors: string[] = [];
 
@@ -173,47 +231,29 @@ OUTPUT (JSON)
     ].filter((p): p is AiProvider => p !== null);
 
     for (const provider of visionProviders) {
-      if (visionTaskRes) break;
+      if (visionResult) break;
       
       currentVisionProvider = provider;
       const supportsVision = currentVisionProvider.supportsVision && finalScreenshots.length > 0;
 
       console.log(`[Audit Service] Trying vision provider: ${currentVisionProvider.name}`);
       
-      const result = await safeTask(generateText({
-        model: currentVisionProvider.model,
-        system: "You are a specialized audit agent. You MUST only output valid JSON. Do not include any preamble, explanation, or conversational text. Ensure all strings are properly escaped and the JSON structure is strictly followed.",
-        messages: [
-          {
-            role: "user",
-            content: [
-              { 
-                type: "text", 
-                text: this.getFrontendPrompt(
-                  contextData.url, 
-                  contextData.title, 
-                  contextData.text, 
-                  contextData.signals, 
-                  supportsVision
-                ) 
-              },
-              ...(supportsVision && finalScreenshots.length > 0
-                ? finalScreenshots.map((s): ImagePart => {
-                    const imgPart: ImagePart = {
-                      type: "image",
-                      image: Buffer.from(s, "base64"),
-                      mediaType: "image/png"
-                    };
-                    return imgPart;
-                  })
-                : [])
-            ]
-          }
-        ]
+      const result = await safeTask(this.generateStructuredAudit({
+        provider: currentVisionProvider,
+        prompt: this.getFrontendPrompt(
+          contextData.url,
+          contextData.title,
+          contextData.text,
+          contextData.signals,
+          supportsVision
+        ),
+        screenshots: finalScreenshots,
+        supportsVision,
+        taskName: "vision",
       }), `Vision (${currentVisionProvider.name})`);
 
       if (result) {
-        visionTaskRes = result;
+        visionResult = result;
         console.log(`[Audit Service] Vision succeeded with: ${currentVisionProvider.name}`);
         break;
       } else {
@@ -222,29 +262,31 @@ OUTPUT (JSON)
       }
     }
 
-    if (!visionTaskRes) {
+    if (!visionResult) {
       console.error(`[Audit Service] All vision providers failed: ${visionErrors.join(", ")}`);
     }
 
     // 3. Code Analysis with Fallback
-    let codeTaskRes = null;
+    let codeResult: AuditResponse | null = null;
     let currentCodeProvider = codeProvider;
 
     if (currentCodeProvider && githubCodeText) {
-      codeTaskRes = await safeTask(generateText({ 
-        model: currentCodeProvider.model, 
-        prompt: this.getBackendPrompt(githubCodeText) 
+      codeResult = await safeTask(this.generateStructuredAudit({
+        provider: currentCodeProvider,
+        prompt: this.getBackendPrompt(githubCodeText),
+        taskName: "code",
       }), `Code (${currentCodeProvider.name})`);
 
       // Fallback if primary code failed
-      if (!codeTaskRes) {
+      if (!codeResult) {
         console.log("[Audit Service] Primary code analysis failed, trying fallback...");
         const fallbackCode = AiService.getCodeModel(); // Gets best available from fallback list
         if (fallbackCode && fallbackCode.name !== currentCodeProvider.name) {
           currentCodeProvider = fallbackCode;
-          codeTaskRes = await safeTask(generateText({ 
-            model: currentCodeProvider.model, 
-            prompt: this.getBackendPrompt(githubCodeText) 
+          codeResult = await safeTask(this.generateStructuredAudit({
+            provider: currentCodeProvider,
+            prompt: this.getBackendPrompt(githubCodeText),
+            taskName: "code fallback",
           }), `Code Fallback (${currentCodeProvider.name})`);
         }
       }
@@ -252,26 +294,6 @@ OUTPUT (JSON)
 
     // 4. Static Backend Analysis
     const backendMetrics = githubCodeText ? StaticAnalyzer.analyze(githubCodeText) : null;
-
-    let visionResult: AuditResponse | null = null;
-    let codeResult: AuditResponse | null = null;
-
-    if (visionTaskRes?.text) {
-      try { 
-        visionResult = parseJsonFromText(visionTaskRes.text); 
-      } catch (e) {
-        console.error("[Audit Service] Failed to parse Vision JSON:", e);
-        errors.push("Vision: Invalid JSON response");
-      }
-    }
-    if (codeTaskRes?.text) {
-      try { 
-        codeResult = parseJsonFromText(codeTaskRes.text); 
-      } catch (e) {
-        console.error("[Audit Service] Failed to parse Code JSON:", e);
-        errors.push("Code: Invalid JSON response");
-      }
-    }
 
     const ruleIssues = buildRuleIssues(contextData.signals);
     const cleanLighthouse = lighthouseMetrics ? {
@@ -392,9 +414,13 @@ OUTPUT (JSON)
       };
     }
 
-    // AI was used for at least one part
-    // Use mergeIssues to deduplicate between vision and code issues
-    const allIssues = mergeIssues(vision?.issues || [], code?.issues || []);
+    // AI was used for at least one part. Keep deterministic findings in the
+    // final report so measurable failures are not hidden by a successful LLM run.
+    const backendRuleIssues = this.buildBackendMetricIssues(backendMetrics);
+    const allIssues = mergeIssues(
+      [...(vision?.issues || []), ...(code?.issues || [])],
+      [...ruleIssues, ...backendRuleIssues]
+    );
 
     // Scoring Logic using Centralized Weights
     const lhAvg = lighthouse ? Math.round((lighthouse.performance + lighthouse.accessibility + lighthouse.bestPractices + lighthouse.seo) / 4) : 0;
@@ -428,11 +454,6 @@ OUTPUT (JSON)
     }
 
     // Ensure minimum threshold for good audits
-    if (allIssues.filter(i => i.severity === "high").length === 0) {
-      frontendScore = Math.max(80, frontendScore);
-      backendScore = Math.max(80, backendScore);
-    }
-
     const finalScore = Math.round(
       backendMetrics 
         ? (frontendScore * ow.frontend + backendScore * ow.backend) 
@@ -460,12 +481,56 @@ OUTPUT (JSON)
       launchScore: finalScore,
       frontendScore,
       backendScore,
-      verdict: (vision?.verdict || code?.verdict || "needs-fixes") as AuditResponse["verdict"],
+      verdict: getVerdict(finalScore, allIssues),
       improvementPrompt: `Frontend:\n${vision?.improvementPrompt || "N/A (Lighthouse metrics: " + (lighthouse ? `Performance ${lighthouse.performance}, Accessibility ${lighthouse.accessibility}, Best Practices ${lighthouse.bestPractices}, SEO ${lighthouse.seo}` : "N/A") + ")"}\n\nBackend:\n${code?.improvementPrompt || "N/A (Static Analyzer scores: " + (backendMetrics ? `Security ${backendMetrics.security}, Code Quality ${backendMetrics.codeQuality}, Maintainability ${backendMetrics.maintainability}` : "N/A") + ")"}`,
       analysisMode: vision && code ? "ai-split" : "ai-partial",
       provider: usedTools.join(" + "),
       lighthouse: lighthouse || undefined,
       backendMetrics: backendMetrics || undefined,
     };
+  }
+
+  private static buildBackendMetricIssues(backendMetrics: BackendMetrics | null): AuditIssue[] {
+    if (!backendMetrics) return [];
+
+    const issues: AuditIssue[] = [];
+
+    if (backendMetrics.security < 85) {
+      issues.push({
+        category: "security",
+        title: "Static security scan needs review",
+        severity: backendMetrics.security < 65 ? "high" : "medium",
+        description: "The deterministic repository scan found security-sensitive patterns that should be reviewed before launch.",
+        fixPrompt: "Review backend code for hardcoded secrets, unsafe eval/exec usage, raw HTML injection, and missing environment variable validation. Move all secrets to env vars and validate untrusted input before use.",
+        evidence: `Static security score: ${backendMetrics.security}/100`,
+        confidence: "high",
+      });
+    }
+
+    if (backendMetrics.codeQuality < 75) {
+      issues.push({
+        category: "architecture",
+        title: "Backend code quality signals are weak",
+        severity: backendMetrics.codeQuality < 55 ? "high" : "medium",
+        description: "The repository scan found patterns such as excessive console logging, loose TypeScript types, or weak async error handling.",
+        fixPrompt: "Replace loose any types with explicit DTOs, remove noisy console.log calls from production paths, and wrap external I/O in structured try/catch blocks with typed errors.",
+        evidence: `Static code quality score: ${backendMetrics.codeQuality}/100`,
+        confidence: "medium",
+      });
+    }
+
+    if (backendMetrics.maintainability < 75) {
+      issues.push({
+        category: "architecture",
+        title: "Backend maintainability is at risk",
+        severity: backendMetrics.maintainability < 55 ? "high" : "medium",
+        description: "Large files or deeply nested code can make audit fixes harder to verify and increase regression risk.",
+        fixPrompt: "Split large backend files into focused modules, extract repeated logic into helpers, and flatten deeply nested control flow with early returns.",
+        evidence: `Static maintainability score: ${backendMetrics.maintainability}/100`,
+        confidence: "medium",
+      });
+    }
+
+    return issues;
   }
 }

@@ -103,7 +103,7 @@ export function AuditForm({
           </label>
         </div>
         <p className="px-1 text-[10px] text-muted-foreground">
-          Tip: 1-3 screenshots of different pages work best. If omitted, we&apos;ll try to capture them automatically.
+          Tip: desktop and mobile screenshots work best. If omitted, we&apos;ll try to capture both automatically.
         </p>
         <Input
           type="text"

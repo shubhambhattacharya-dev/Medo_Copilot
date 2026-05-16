@@ -38,7 +38,6 @@ import {
   Gauge,
   Cpu,
 } from "lucide-react";
-import { escapeHtml } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────
 type AuditResult = {
@@ -265,7 +264,7 @@ export default function AuditPage() {
         {/* ── Report Banner ── */}
         <div className="mt-6 flex items-center gap-3 rounded-2xl border border-cyan-400/15 bg-gradient-to-r from-cyan-500/[0.06] to-transparent px-5 py-3.5 backdrop-blur-sm">
           <BadgeCheck className="h-4 w-4 shrink-0 text-cyan-400" />
-          <p className="text-xs leading-5 text-cyan-300/80"><span className="font-semibold text-cyan-300">Verified Analysis</span> — This report was generated using state-of-the-art vision models and deterministic heuristics.</p>
+          <p className="text-xs leading-5 text-cyan-300/80"><span className="font-semibold text-cyan-300">{result.warning ? "Partial Evidence" : "Evidence-Based Audit"}</span> — This report is based on the screenshots, extracted page signals, Lighthouse metrics, static checks, and AI findings available for this run.</p>
         </div>
 
         {/* ── Score Hero ── */}
@@ -321,7 +320,7 @@ export default function AuditPage() {
               {lowCount > 0 && <span className="flex items-center gap-1.5 rounded-full bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-400"><span className="h-1.5 w-1.5 rounded-full bg-blue-500" /> {lowCount} Info</span>}
             </div>
           )}
-          {sortedIssues.length === 0 && !result.warning && <p className="text-sm text-emerald-400 font-medium">✨ No issues found — your app looks great!</p>}
+          {sortedIssues.length === 0 && !result.warning && <p className="text-sm text-emerald-400 font-medium">No issues found in the available evidence. Run manual QA before launch.</p>}
           
           {/* ── AI Failure Warning Banner ── */}
           {result.warning && (
@@ -350,7 +349,7 @@ export default function AuditPage() {
                   {[
                     "AI may misinterpret visual elements or miss context-specific nuances in page design.",
                     "Rule-based checks (meta tags, CTA keywords, alt text) are deterministic and highly reliable.",
-                    result.analysisMode === "fallback" ? "Text-only fallback mode was used — visual layout could not be verified." : "Screenshot analysis provides ~85-90% accuracy for visual issues.",
+                    result.analysisMode === "fallback" || result.analysisMode === "automated-heuristics" ? "Text-only or heuristic fallback mode was used, so visual layout confidence is limited." : "Screenshot analysis improves visual confidence, but manual QA is still required for production decisions.",
                     "For production decisions, combine this report with manual QA and real user testing.",
                   ].map((txt, i) => (
                     <p key={i} className="flex items-start gap-2 text-[11px] leading-5 text-amber-200/60">
@@ -390,7 +389,7 @@ export default function AuditPage() {
             <div className="space-y-3">
               <div className="space-y-1">
                 <p className="text-[11px] font-bold text-emerald-400 uppercase tracking-tighter">Pros</p>
-                <p className="text-xs text-muted-foreground leading-5">100% reliable, objective metrics (Lighthouse), precise security scanning, and no quota limits.</p>
+                <p className="text-xs text-muted-foreground leading-5">Repeatable objective metrics from Lighthouse and static rules, useful for grounding the AI report and reducing guesswork.</p>
               </div>
               <div className="space-y-1">
                 <p className="text-[11px] font-bold text-red-400 uppercase tracking-tighter">Cons</p>
@@ -603,7 +602,7 @@ export default function AuditPage() {
                   </div>
                 </div>
                 <div className="mt-5 rounded-xl border border-emerald-500/10 bg-black/20 p-5">
-                  <pre className="whitespace-pre-wrap font-mono text-xs leading-7 text-emerald-100/70">{escapeHtml(result.improvementPrompt || "")}</pre>
+                  <pre className="whitespace-pre-wrap font-mono text-xs leading-7 text-emerald-100/70">{result.improvementPrompt || ""}</pre>
                 </div>
                 <Button onClick={() => copyText(result.improvementPrompt!, "Improvement prompt")} className="mt-5 rounded-xl bg-emerald-600 px-8 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 hover:bg-emerald-500 hover:shadow-emerald-500/30">
                   <ClipboardCopy className="mr-2 h-4 w-4" /> Copy Full Prompt
@@ -619,7 +618,7 @@ export default function AuditPage() {
             <button onClick={() => setThinkingOpen(!thinkingOpen)} className="flex w-full items-center justify-between rounded-2xl border border-border/50 bg-background/60 p-5 text-left backdrop-blur-xl transition-all hover:border-border/80 hover:shadow-lg hover:shadow-black/5">
               <div className="flex items-center gap-3">
                 <div className="rounded-xl bg-violet-500/10 p-2"><Sparkles className="h-4 w-4 text-violet-400" /></div>
-                <span className="text-sm font-bold">AI Reasoning Process</span>
+                <span className="text-sm font-bold">Audit Evidence Checklist</span>
                 <span className="rounded-md bg-muted/40 px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">{result.thoughtProcess.length} steps</span>
               </div>
               {thinkingOpen ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}

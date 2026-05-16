@@ -30,7 +30,7 @@ Never face "AI Downtime." Our system implements a **Waterfall Fallback Chain**:
 - Tertiary: **OpenRouter** (Claude 3.5 Sonnet / GPT-4).
 
 ### 3. 👁️ Visual Intelligence (Vision-First)
-Unlike text-only auditors, we capture real-time screenshots using **Playwright**. The AI "sees" your layout, color contrast, and mobile responsiveness just like a human eye would.
+Unlike text-only auditors, we capture desktop and mobile screenshots using **Playwright**. The AI reviews visual evidence alongside extracted page text and deterministic signals, then labels findings with confidence.
 
 ### 4. 🛡️ Static Backend Security Audit
 Our built-in static analyzer scans your repository code for:
@@ -44,7 +44,7 @@ Designed for flexibility. Users can use our server's default models or provide t
 ---
 
 ## 🛠️ Tech Stack
-- **Framework:** Next.js 15 (App Router) + TypeScript
+- **Framework:** Next.js 16 (App Router) + TypeScript
 - **AI SDK:** Vercel AI SDK (Unified interface for all LLMs)
 - **Browsing:** Playwright + Cheerio (Scraping & Screenshots)
 - **Styling:** Tailwind CSS + Shadcn/UI
@@ -71,6 +71,9 @@ We believe in maintainability. All critical logic is centralized:
    GOOGLE_GENERATIVE_AI_API_KEY=your_key
    GROQ_API_KEY=your_key
    OPENROUTER_API_KEY=your_key
+   DATABASE_URL=your_neon_database_url
+   ENCRYPTION_MASTER_KEY=64_hex_characters_for_saved_user_keys
+   PAGESPEED_API_KEY=optional_google_pagespeed_key
    ```
 
 3. **Run Dev:**
@@ -81,6 +84,6 @@ We believe in maintainability. All critical logic is centralized:
 ---
 
 ## 📈 Accuracy Statement
-Medo Copilot is **~90% accurate** compared to a human senior developer audit. By combining expert personas (UX Designer, QA Engineer, Security Lead), it provides actionable "Fix Prompts" that you can copy-paste directly into your project.
+Medo Copilot is an **evidence-based launch-readiness assistant**, not a replacement for manual QA, security review, or user testing. It improves accuracy by combining structured LLM output, desktop/mobile screenshots, Lighthouse/PageSpeed metrics, static code heuristics, and confidence labels. Production launch decisions should use this report as a triage layer and verify high-impact findings manually.
 
 **Stop guessing. Start auditing. Launch with Medo Copilot.**

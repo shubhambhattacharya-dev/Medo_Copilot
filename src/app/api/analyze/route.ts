@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import * as cheerio from "cheerio";
 import { chromium, type Browser } from "playwright";
 import { saveAudit, getUserSettings, getCachedAudit } from "@/lib/audits";
@@ -54,10 +56,15 @@ async function getBrowser() {
   return browserInstance;
 }
 
-async function attachSavedAuditId(url: string, result: AuditResponse, userId?: string | null) {
+async function attachSavedAuditId(
+  url: string,
+  result: AuditResponse,
+  userId?: string | null,
+  shouldSave = true
+) {
   try {
     // Don't save failed audits to cache, so users can retry immediately
-    if (result.analysisMode === "failed" || result.launchScore === 0) {
+    if (!shouldSave || result.analysisMode === "failed" || result.launchScore === 0) {
       return result;
     }
 
@@ -84,9 +91,9 @@ async function attachSavedAuditId(url: string, result: AuditResponse, userId?: s
 }
 
 function isPrivateOrLocalUrl(targetUrl: URL) {
-  const hostname = targetUrl.hostname.toLowerCase();
+  const hostname = targetUrl.hostname.toLowerCase().replace(/^\[|\]$/g, "");
 
-  if (["localhost", "127.0.0.1", "0.0.0.0", "::1"].includes(hostname)) {
+  if (["localhost", "127.0.0.1", "0.0.0.0", "::", "::1"].includes(hostname)) {
     return true;
   }
 
@@ -108,6 +115,56 @@ function isPrivateOrLocalUrl(targetUrl: URL) {
   );
 }
 
+function isPrivateAddress(address: string) {
+  const normalized = address.toLowerCase().replace(/^\[|\]$/g, "");
+
+  if (normalized.includes(".")) {
+    return isPrivateOrLocalUrl(new URL(`http://${normalized}`));
+  }
+
+  if (normalized.startsWith("::ffff:")) {
+    return true;
+  }
+
+  if (isPrivateOrLocalUrl(new URL(`http://[${normalized}]`))) {
+    return true;
+  }
+
+  if (normalized === "::1" || normalized === "::" || normalized.startsWith("fe80:")) {
+    return true;
+  }
+
+  if (/^f[cd][0-9a-f]:/i.test(normalized)) {
+    return true;
+  }
+
+  return false;
+}
+
+async function assertPublicHttpUrl(targetUrl: URL) {
+  if (!["http:", "https:"].includes(targetUrl.protocol)) {
+    throw new ValidationError("Only HTTP and HTTPS URLs can be audited");
+  }
+
+  if (isPrivateOrLocalUrl(targetUrl)) {
+    throw new ValidationError("Use a public preview URL. Localhost and private network URLs cannot be audited safely.");
+  }
+
+  if (isIP(targetUrl.hostname)) {
+    return;
+  }
+
+  try {
+    const addresses = await lookup(targetUrl.hostname, { all: true });
+    if (addresses.length === 0 || addresses.some(({ address }) => isPrivateAddress(address))) {
+      throw new ValidationError("Use a public preview URL. URLs resolving to private network addresses cannot be audited safely.");
+    }
+  } catch (error) {
+    if (error instanceof ValidationError) throw error;
+    throw new ValidationError("Could not resolve the URL hostname. Use a publicly reachable preview URL.");
+  }
+}
+
 export const maxDuration = 60; // Max duration for Vercel (if on Pro)
 
 export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<AuditResponse>>> {
@@ -119,11 +176,19 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<A
       throw new RateLimitError(rateLimit.resetIn);
     }
 
+    const contentLength = Number(req.headers.get("content-length") || "0");
+    if (contentLength > 38 * 1024 * 1024) {
+      throw new ValidationError("Request is too large. Upload up to 7 screenshots under 5MB each.");
+    }
+
     const formData = await req.formData();
     const url = formData.get("url") as string | null;
     const force = formData.get("force") === "true";
     const userScreenshot = formData.get("screenshot") as string | null;
     const githubUrl = formData.get("githubUrl") as string | null;
+    const hasUploadedScreenshot =
+      (typeof userScreenshot === "string" && userScreenshot.length > 100) ||
+      Array.from(formData.keys()).some((key) => key.startsWith("screenshot_"));
 
     if (!url || typeof url !== "string") {
       throw new ValidationError("URL is required");
@@ -141,14 +206,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<A
       throw new ValidationError("URL is invalid");
     }
 
-    // Check for cached audit (within last 1 hour) - early exit if not forced
-    if (!force) {
-      const cachedAudit = await getCachedAudit(validUrl);
-      if (cachedAudit) {
-        console.log(`[Audit API] Returning cached audit for ${validUrl}`);
-        return NextResponse.json({ success: true, data: cachedAudit as unknown as AuditResponse });
-      }
-    }
+    await assertPublicHttpUrl(parsedUrl);
 
     // Strip fragment for the actual fetch/analysis as it's client-side only
     const fetchUrl = parsedUrl.origin + parsedUrl.pathname + parsedUrl.search;
@@ -185,13 +243,22 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<A
 
     const effectiveCodeKey = formCodeKey || userSettings?.codeKey || null;
 
-    if (!["http:", "https:"].includes(parsedUrl.protocol)) {
-      throw new ValidationError("Only HTTP and HTTPS URLs can be audited");
+    const cacheEligible =
+      !force &&
+      !formVisionKey &&
+      !formCodeKey &&
+      !effectiveVisionProvider &&
+      !effectiveCodeProvider &&
+      !githubUrl &&
+      !hasUploadedScreenshot;
+    if (cacheEligible) {
+      const cachedAudit = await getCachedAudit(validUrl, userId);
+      if (cachedAudit) {
+        console.log(`[Audit API] Returning cached audit for ${validUrl}`);
+        return NextResponse.json({ success: true, data: cachedAudit as unknown as AuditResponse });
+      }
     }
-
-    if (isPrivateOrLocalUrl(parsedUrl)) {
-      throw new ValidationError("Use a public preview URL. Localhost and private network URLs cannot be audited safely.");
-    }
+    const shouldSaveAudit = !githubUrl && !hasUploadedScreenshot && !formVisionKey && !formCodeKey;
 
     console.log(`Fetching HTML from: ${validUrl}`);
     let pageTitle = "";
@@ -212,7 +279,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<A
 
     let githubCodeText = "";
     if (githubUrl && typeof githubUrl === "string") {
-      const githubPattern = /^https?:\/\/github\.com\/[\w-]+\/[\w.-]+(\/tree\/[\w.-]+)?\/?$/;
+      const githubPattern = /^https?:\/\/github\.com\/[\w.-]+\/[\w.-]+(?:\/tree\/[^?#]+)?\/?$/;
       if (!githubPattern.test(githubUrl)) {
         throw new ValidationError("Invalid GitHub URL. Must match pattern like github.com/owner/repo or github.com/owner/repo/tree/branch");
       }
@@ -254,11 +321,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<A
       }
     }
 
-    if (userScreenshot && typeof userScreenshot === "string" && userScreenshot.length > 100) {
-      console.log("User provided screenshot - using for analysis...");
-      screenshots.push(userScreenshot);
-    }
-
     if (screenshots.length === 0) {
       try {
         console.log(`Launching browser for ${validUrl}...`);
@@ -281,8 +343,13 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<A
           ]);
 
           await page.waitForTimeout(1000);
-          const screenshot = await page.screenshot({ type: "png" });
-          screenshots.push(screenshot.toString("base64"));
+          const desktopScreenshot = await page.screenshot({ type: "png", fullPage: false });
+          screenshots.push(desktopScreenshot.toString("base64"));
+
+          await page.setViewportSize({ width: 390, height: 844 });
+          await page.waitForTimeout(700);
+          const mobileScreenshot = await page.screenshot({ type: "png", fullPage: false });
+          screenshots.push(mobileScreenshot.toString("base64"));
 
           const html = await page.content();
           const $ = cheerio.load(html);
@@ -347,24 +414,19 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<A
 
     if (fetchReason && !pageText) {
       console.error(`Audit Failed: ${fetchReason}`);
-      const finalized = await attachSavedAuditId(validUrl, fallbackResult, userId);
+      const finalized = await attachSavedAuditId(validUrl, fallbackResult, userId, shouldSaveAudit);
       return NextResponse.json({ success: true, data: finalized });
-    }
-
-    // Check for cached audit (within last 1 hour)
-    const cachedAudit = await getCachedAudit(validUrl);
-    if (cachedAudit) {
-      console.log(`[Audit API] Returning cached audit for ${validUrl}`);
-      return NextResponse.json({ success: true, data: cachedAudit as unknown as AuditResponse });
     }
 
     // Resolve AI Models
     const visionModel = AiService.getVisionModel(effectiveVisionProvider || undefined, effectiveVisionKey);
-    const codeModel = effectiveCodeProvider ? AiService.getCodeModel(effectiveCodeProvider, effectiveCodeKey) : null;
+    const codeModel = githubCodeText
+      ? AiService.getCodeModel(effectiveCodeProvider || undefined, effectiveCodeKey)
+      : null;
 
     if (!visionModel) {
       console.error("No AI models configured! Check your keys.");
-      const finalized = await attachSavedAuditId(validUrl, fallbackResult, userId);
+      const finalized = await attachSavedAuditId(validUrl, fallbackResult, userId, shouldSaveAudit);
       return NextResponse.json({ success: true, data: finalized });
     }
 
@@ -384,7 +446,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<A
       );
 
       // Save and Return
-      const finalized = await attachSavedAuditId(validUrl, auditResult, userId);
+      const finalized = await attachSavedAuditId(validUrl, auditResult, userId, shouldSaveAudit);
       const duration = ((Date.now() - startTime) / 1000).toFixed(2);
       console.log(`[Audit API] Analysis complete in ${duration}s`);
       
@@ -399,7 +461,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<A
         warning: `AI Analysis failed: ${getErrorMessage(llmError)}. Showing deterministic metrics only.`
       };
       
-      const finalized = await attachSavedAuditId(validUrl, errorResult, userId);
+      const finalized = await attachSavedAuditId(validUrl, errorResult, userId, shouldSaveAudit);
       return NextResponse.json({ success: true, data: finalized });
     }
   } catch (error) {

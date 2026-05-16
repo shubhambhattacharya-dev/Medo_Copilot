@@ -85,6 +85,7 @@ export async function saveAudit(input: SaveAuditInput) {
       provider,
       lighthouse,
       backend_metrics,
+      warning,
       user_id
     )
     VALUES (
@@ -98,6 +99,7 @@ export async function saveAudit(input: SaveAuditInput) {
       ${input.provider ?? null},
       ${input.lighthouse ? JSON.stringify(input.lighthouse) : null}::jsonb,
       ${input.backendMetrics ? JSON.stringify(input.backendMetrics) : null}::jsonb,
+      ${input.warning ?? null},
       ${input.userId ?? null}
     )
     RETURNING id
@@ -106,7 +108,7 @@ export async function saveAudit(input: SaveAuditInput) {
   return rows[0]?.id as string | null;
 }
 
-export async function getCachedAudit(url: string) {
+export async function getCachedAudit(url: string, userId?: string | null) {
   const db = await ensureAuditTable();
   if (!db) return null;
 
@@ -116,6 +118,10 @@ export async function getCachedAudit(url: string) {
     SELECT *
     FROM audits
     WHERE url = ${url}
+      AND (
+        (${userId ?? null}::text IS NULL AND user_id IS NULL)
+        OR user_id = ${userId ?? null}
+      )
       AND created_at >= ${oneHourAgo.toISOString()}
     ORDER BY created_at DESC
     LIMIT 1
@@ -132,6 +138,7 @@ export async function getCachedAudit(url: string) {
     lighthouse: unknown;
     backend_metrics: unknown;
     user_id: string | null;
+    warning: string | null;
     created_at: string;
   }>;
 
@@ -150,7 +157,7 @@ export async function getCachedAudit(url: string) {
     provider: row.provider,
     lighthouse: row.lighthouse,
     backendMetrics: row.backend_metrics,
-    userId: row.user_id,
+    warning: row.warning,
     createdAt: row.created_at,
   };
 }
