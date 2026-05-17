@@ -52,6 +52,14 @@ export class StaticAnalyzer {
       qualityScore -= 10;
     }
 
+    // Check 5: Hardcoded local URLs
+    const localUrlRegex = /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|::1)/g;
+    const localUrlsFound = (githubCodeText.match(localUrlRegex) || []).length;
+    if (localUrlsFound > 0) {
+      securityScore -= 5;
+      qualityScore -= 5;
+    }
+
     // ─── 2. CODE QUALITY CHECKS ───
     
     // Check 1: Excessive console.logs (excluding error logs)
@@ -61,40 +69,57 @@ export class StaticAnalyzer {
       qualityScore -= Math.min((logsFound - totalFiles * 2) * 2, 30);
     }
 
-    // Check 2: 'any' types in TypeScript
-    const anyRegex = /:\s*any[\s,;>]/g;
+    // Check 2: 'any' types in TypeScript (more precise)
+    const anyRegex = /:\s*any(?![a-zA-Z0-9_])|as\s+any(?![a-zA-Z0-9_])/g;
     const anyFound = (githubCodeText.match(anyRegex) || []).length;
     if (anyFound > 0) {
       qualityScore -= Math.min(anyFound * 5, 40);
     }
 
     // Check 3: Missing Try/Catch in Async (heuristic)
-    const asyncRegex = /async\s+function|async\s*\(/g;
+    const asyncRegex = /async\s+(?:function|\w+\s*=|\(.*?\) =>)/g;
     const tryCatchRegex = /try\s*\{/g;
     const asyncFound = (githubCodeText.match(asyncRegex) || []).length;
     const tryCatchFound = (githubCodeText.match(tryCatchRegex) || []).length;
-    if (asyncFound > 0 && tryCatchFound < asyncFound / 2) {
-      qualityScore -= 20; // Penalty if fewer than half of async functions have try/catch
+    if (asyncFound > 2 && tryCatchFound < asyncFound / 2) {
+      qualityScore -= 15; 
+    }
+
+    // Check 4: Missing Error Boundaries (for React)
+    const hasReact = /import\s+.*?React|from\s+['"]react['"]/i.test(githubCodeText);
+    const hasErrorBoundary = /ErrorBoundary|error\.tsx|global-error\.tsx/i.test(githubCodeText);
+    if (hasReact && !hasErrorBoundary) {
+      qualityScore -= 10;
     }
 
     // ─── 3. MAINTAINABILITY CHECKS ───
 
-    // Check 1: Monolithic files
+    // Check 1: Monolithic files & Deep Nesting
     let monolithicFiles = 0;
     let deepNesting = 0;
+    let complexFiles = 0;
 
     for (const fileText of files) {
-      const lineCount = fileText.split('\n').length;
-      if (lineCount > 400) monolithicFiles++;
+      const lines = fileText.split('\n');
+      const lineCount = lines.length;
+      if (lineCount > 350) monolithicFiles++;
       
       // Heuristic for deep nesting (e.g. 5 tabs/spaces deep)
       const deepIndentRegex = /^( {10,}|\t{5,})/gm;
       const deeplyNestedLines = (fileText.match(deepIndentRegex) || []).length;
       if (deeplyNestedLines > 10) deepNesting++;
+
+      // Check for large functions (heuristic: many lines without a closing brace at column 0)
+      const functionStartRegex = /^(?:export\s+)?(?:async\s+)?function\s+\w+|const\s+\w+\s*=\s*(?:async\s+)?\(.*?\)\s*=>\s*\{/gm;
+      const functionsFound = (fileText.match(functionStartRegex) || []).length;
+      if (functionsFound > 0 && lineCount / functionsFound > 60) {
+        complexFiles++;
+      }
     }
 
-    maintainabilityScore -= Math.min(monolithicFiles * 15, 50);
-    maintainabilityScore -= Math.min(deepNesting * 10, 40);
+    maintainabilityScore -= Math.min(monolithicFiles * 15, 40);
+    maintainabilityScore -= Math.min(deepNesting * 10, 30);
+    maintainabilityScore -= Math.min(complexFiles * 10, 30);
 
     // Final Boundaries
     return {

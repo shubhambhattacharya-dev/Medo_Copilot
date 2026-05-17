@@ -352,7 +352,7 @@ OUTPUT (JSON)
         : "Standard heuristic analysis tools.";
 
       const fallbackIssues = [...measured.issues];
-      // ... (rest of issue generation logic remains same)
+      
       if (lighthouse) {
         if (lighthouse.performance < 70) {
           fallbackIssues.push({
@@ -376,32 +376,23 @@ OUTPUT (JSON)
             confidence: "high"
           });
         }
+        if (lighthouse.bestPractices < 90) {
+          fallbackIssues.push({
+            category: "architecture",
+            title: "Best Practices Audit",
+            severity: "low",
+            description: `The app score for best practices is ${lighthouse.bestPractices}/100.`,
+            fixPrompt: "Ensure all resources are served over HTTPS and use modern image formats like WebP.",
+            evidence: `Lighthouse Best Practices: ${lighthouse.bestPractices}`,
+            confidence: "high"
+          });
+        }
       }
 
       // Generate issues from Static Analysis if AI failed
       if (backendMetrics) {
-        if (backendMetrics.security < 80) {
-          fallbackIssues.push({
-            category: "security",
-            title: "Security Risks Detected",
-            severity: "high",
-            description: `Static analysis detected potential security vulnerabilities (Score: ${backendMetrics.security}/100).`,
-            fixPrompt: "Review code for hardcoded secrets, dangerous functions like eval(), and ensure all inputs are validated.",
-            evidence: "Deterministic regex scan of repository code.",
-            confidence: "high"
-          });
-        }
-        if (backendMetrics.codeQuality < 70) {
-          fallbackIssues.push({
-            category: "architecture",
-            title: "Code Quality & Patterns",
-            severity: "medium",
-            description: `Backend code quality is rated at ${backendMetrics.codeQuality}/100.`,
-            fixPrompt: "Remove excessive console logs, use proper TypeScript types (avoid 'any'), and add try/catch blocks to async operations.",
-            evidence: "Pattern-based analysis of codebase structure.",
-            confidence: "medium"
-          });
-        }
+        const beRuleIssues = this.buildBackendMetricIssues(backendMetrics);
+        fallbackIssues.push(...beRuleIssues);
       }
 
       return {
