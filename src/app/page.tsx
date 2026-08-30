@@ -161,7 +161,7 @@ export default function Home() {
         "medo_audit_result",
         JSON.stringify({ ...auditResult, auditedUrl: submittedUrl })
       );
-      router.push("/audit");
+      router.push(auditResult.auditId ? `/audit?id=${auditResult.auditId}` : "/audit");
     } catch (error: unknown) {
       console.error("Error analyzing app:", error);
       const errorMessage =
@@ -218,6 +218,13 @@ export default function Home() {
             
             {isSignedIn ? (
               <>
+                <button
+                  onClick={() => router.push("/metrics")}
+                  className="flex items-center gap-2 rounded-full border border-border/70 bg-muted/50 px-3 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <BarChart3 className="h-3.5 w-3.5" />
+                  <span>Metrics</span>
+                </button>
                 <button
                   onClick={() => router.push("/settings")}
                   className="flex items-center gap-2 rounded-full border border-border/70 bg-muted/50 px-3 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"

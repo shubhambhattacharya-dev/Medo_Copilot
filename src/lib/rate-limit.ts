@@ -1,16 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { neon } from "@neondatabase/serverless";
+import { getServerEnv } from "./env";
 
 interface RateLimitConfig {
   windowMs: number;
   maxRequests: number;
+  identifier?: string;
+  cost?: number;
 }
 
 let sql: ReturnType<typeof neon> | null = null;
 
 function getSql() {
-  if (!process.env.DATABASE_URL) return null;
-  sql ??= neon(process.env.DATABASE_URL);
+  const env = getServerEnv();
+  if (!env.DATABASE_URL) return null;
+  sql ??= neon(env.DATABASE_URL);
   return sql;
 }
 
@@ -41,11 +45,15 @@ export async function checkRateLimitAsync(
   request: NextRequest,
   config: RateLimitConfig = { windowMs: 60 * 1000, maxRequests: 5 }
 ): Promise<{ success: boolean; remaining: number; resetIn: number }> {
-  const ip = getClientIP(request);
+  const identifier = config.identifier ?? getClientIP(request);
+  const cost = Math.max(1, Math.floor(config.cost ?? 1));
   const now = Date.now();
   const db = await ensureRateLimitTable();
 
   if (!db) {
+    if (getServerEnv().NODE_ENV === "production") {
+      return { success: false, remaining: 0, resetIn: config.windowMs };
+    }
     return { success: true, remaining: config.maxRequests, resetIn: config.windowMs };
   }
 
@@ -53,11 +61,11 @@ export async function checkRateLimitAsync(
   const result = await db`
     WITH upsert AS (
       INSERT INTO rate_limits (ip, count, reset_time)
-      VALUES (${ip}, 1, ${now + config.windowMs})
+      VALUES (${identifier}, ${cost}, ${now + config.windowMs})
       ON CONFLICT (ip) DO UPDATE SET
         count = CASE
-          WHEN rate_limits.reset_time < ${now} THEN 1
-          ELSE rate_limits.count + 1
+          WHEN rate_limits.reset_time < ${now} THEN ${cost}
+          ELSE rate_limits.count + ${cost}
         END,
         reset_time = CASE
           WHEN rate_limits.reset_time < ${now} THEN ${now + config.windowMs}

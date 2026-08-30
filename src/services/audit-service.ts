@@ -4,6 +4,7 @@ import { ResultSchema, type AuditResponse, type LighthouseMetrics, type BackendM
 import { StaticAnalyzer } from "@/lib/static-analyzer";
 import { mergeIssues, parseJsonFromText, buildRuleIssues, buildMeasuredResult, getVerdict } from "@/lib/audit-helpers";
 import { SCORING_WEIGHTS } from "@/lib/constants";
+import { getServerEnv } from "@/lib/env";
 
 export class AuditService {
   static getFrontendPrompt(validUrl: string, pageTitle: string, pageText: string, pageSignals: PageSignals, supportsVision: boolean) {
@@ -14,11 +15,11 @@ You are a panel of two senior experts conducting a launch-readiness audit:
 
 You are auditing the FRONTEND of a web application before launch. Your job is to find REAL, ACTIONABLE issues.
 
-═══════════════════════════════════════
-PART A — FRONTEND AUDIT (UX / UI / Copy)
-═══════════════════════════════════════
+=======================================
+PART A - FRONTEND AUDIT (UX / UI / Copy)
+=======================================
 ### A1. HERO & VALUE PROPOSITION
-- Can a visitor understand WHO this is for, WHAT it does, and WHAT RESULT they get — within 3 seconds?
+- Can a visitor understand WHO this is for, WHAT it does, and WHAT RESULT they get - within 3 seconds?
 ### A2. COPY & MESSAGING QUALITY
 - Does the copy use specific numbers/data/proof or generic marketing language?
 ### A3. TRUST & CREDIBILITY SIGNALS
@@ -38,14 +39,14 @@ PART A — FRONTEND AUDIT (UX / UI / Copy)
 ### A10. PAGE PERFORMANCE SIGNALS
 - Is the page content-rich (not thin/sparse)?
 
-═══════════════════════════════════════
+=======================================
 OUTPUT (JSON)
-═══════════════════════════════════════
-{"thoughtProcess": ["A1-Hero: checked headline..."], "launchScore": number, "verdict": "launch-ready|needs-fixes|broken", "summary": "2-3 sentences covering frontend assessment", "issues": [{"category": "copy|trust|cta|mobile|empty-state|error-state|accessibility|performance", "title": "specific issue name", "severity": "high|medium|low", "description": "why this matters", "fixPrompt": "exact actionable instruction to fix this", "evidence": "the exact text/element", "confidence": "high|medium|low"}], "improvementPrompt": "A complete, detailed prompt to fix ALL frontend issues."}
+=======================================
+{"thoughtProcess": ["A1-Hero: checked headline..."], "launchScore": number, "verdict": "launch-ready|needs-fixes|broken", "summary": "2-3 sentences covering frontend assessment", "issues": [{"category": "copy|trust|cta|mobile|empty-state|error-state|accessibility|performance", "title": "specific issue name", "severity": "high|medium|low", "description": "why this matters", "fixPrompt": "exact actionable instruction to fix this", "evidence": "the exact text/element", "confidence": "high|medium|low", "evidenceType": "tool-verified|screenshot-or-text|ai-inference|manual-review", "verifiedBy": ["AI screenshot review"]}], "improvementPrompt": "A complete, detailed prompt to fix ALL frontend issues."}
 
-═══════════════════════════════════════
+=======================================
 TARGET PAGE DATA
-═══════════════════════════════════════
+=======================================
 URL: ${validUrl}
 Title: ${pageTitle}
 Content: ${pageText.substring(0, 4000)}
@@ -94,6 +95,10 @@ Measured signals:
       ...(supportsVision ? this.imagePartsFromBase64(screenshots) : []),
     ];
 
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let totalTokens = 0;
+
     try {
       const result = await generateObject({
         model: provider.model,
@@ -103,7 +108,19 @@ Measured signals:
         temperature: 0.2,
       });
 
-      return result.object;
+      const usage = result.usage;
+      if (usage) {
+        inputTokens = usage.inputTokens ?? 0;
+        outputTokens = usage.outputTokens ?? 0;
+        totalTokens = inputTokens + outputTokens;
+      }
+
+      return {
+        ...result.object,
+        inputTokens,
+        outputTokens,
+        totalTokens,
+      };
     } catch (structuredError) {
       const msg = structuredError instanceof Error ? structuredError.message : String(structuredError);
       console.warn(`[Audit Service] Structured ${taskName} output failed for ${provider.name}, falling back to JSON text: ${msg}`);
@@ -115,7 +132,19 @@ Measured signals:
         temperature: 0.2,
       });
 
-      return parseJsonFromText(textResult.text);
+      const usage = textResult.usage ?? textResult.totalUsage;
+      if (usage) {
+        inputTokens = usage.inputTokens ?? 0;
+        outputTokens = usage.outputTokens ?? 0;
+        totalTokens = inputTokens + outputTokens;
+      }
+
+      return {
+        ...parseJsonFromText(textResult.text),
+        inputTokens,
+        outputTokens,
+        totalTokens,
+      };
     }
   }
 
@@ -124,9 +153,9 @@ Measured signals:
 You are a **Senior Software Engineer** (10+ years, full-stack architecture, security, error handling).
 You are auditing the BACKEND of a web application before launch.
 
-═══════════════════════════════════════
-PART B — BACKEND AUDIT (Code / Architecture)
-═══════════════════════════════════════
+=======================================
+PART B - BACKEND AUDIT (Code / Architecture)
+=======================================
 ### B1. SECURITY
 - Are there hardcoded API keys, secrets, or passwords?
 ### B2. ERROR HANDLING & RESILIENCE
@@ -143,10 +172,10 @@ PART B — BACKEND AUDIT (Code / Architecture)
 BACKEND CODE:
 ${githubCodeText}
 
-═══════════════════════════════════════
+=======================================
 OUTPUT (JSON)
-═══════════════════════════════════════
-{"thoughtProcess": ["B1-Security: scanned for keys..."], "launchScore": number, "verdict": "launch-ready|needs-fixes|broken", "summary": "2-3 sentences covering backend assessment", "issues": [{"category": "security|architecture|database|backend-error", "title": "specific issue name", "severity": "high|medium|low", "description": "why this matters", "fixPrompt": "exact actionable instruction to fix this", "evidence": "the exact code line", "confidence": "high|medium|low"}], "improvementPrompt": "A complete, detailed prompt to fix ALL backend issues."}
+=======================================
+{"thoughtProcess": ["B1-Security: scanned for keys..."], "launchScore": number, "verdict": "launch-ready|needs-fixes|broken", "summary": "2-3 sentences covering backend assessment", "issues": [{"category": "security|architecture|database|backend-error", "title": "specific issue name", "severity": "high|medium|low", "description": "why this matters", "fixPrompt": "exact actionable instruction to fix this", "evidence": "the exact code line", "confidence": "high|medium|low", "evidenceType": "tool-verified|screenshot-or-text|ai-inference|manual-review", "verifiedBy": ["AI code review"]}], "improvementPrompt": "A complete, detailed prompt to fix ALL backend issues."}
 `;
   }
 
@@ -155,7 +184,7 @@ OUTPUT (JSON)
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     try {
-      const key = process.env.PAGESPEED_API_KEY;
+      const key = getServerEnv().PAGESPEED_API_KEY;
       const endpoint = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&category=PERFORMANCE&category=ACCESSIBILITY&category=BEST_PRACTICES&category=SEO${key ? `&key=${key}` : ""}`;
       const res = await fetch(endpoint, { next: { revalidate: 3600 }, signal: controller.signal });
       clearTimeout(timeoutId);
@@ -311,7 +340,9 @@ OUTPUT (JSON)
       currentVisionProvider.name, 
       ruleIssues, 
       { url: contextData.url, title: contextData.title },
-      currentCodeProvider?.name
+      currentCodeProvider?.name,
+      currentVisionProvider.modelId,
+      currentCodeProvider?.modelId
     );
 
     if (errors.length > 0) {
@@ -329,13 +360,20 @@ OUTPUT (JSON)
     visionName: string,
     ruleIssues: AuditIssue[],
     context: { url: string; title: string },
-    codeName?: string
+    codeName?: string,
+    visionModelId?: string,
+    codeModelId?: string
   ): AuditResponse {
     const usedTools: string[] = [];
     if (lighthouse) usedTools.push("Lighthouse (PageSpeed Insights)");
     if (backendMetrics) usedTools.push("Static Analyzer (Security, Code Quality, Maintainability)");
     if (vision) usedTools.push(`${visionName} (AI Vision Analysis)`);
     if (code) usedTools.push(`${codeName || "AI"} (AI Code Analysis)`);
+
+    // Aggregate token usage from AI calls
+    const inputTokens = (vision?.inputTokens ?? 0) + (code?.inputTokens ?? 0);
+    const outputTokens = (vision?.outputTokens ?? 0) + (code?.outputTokens ?? 0);
+    const totalTokens = (vision?.totalTokens ?? 0) + (code?.totalTokens ?? 0);
 
     // Graceful Fallback: If AI completely failed
     if (!vision && !code) {
@@ -362,7 +400,10 @@ OUTPUT (JSON)
             description: `The page performance is ${lighthouse.performance}/100, which can hurt user retention.`,
             fixPrompt: "Optimize image sizes, enable compression, and reduce unused JavaScript.",
             evidence: `Lighthouse Performance Score: ${lighthouse.performance}`,
-            confidence: "high"
+            confidence: "high",
+            evidenceType: "tool-verified",
+            verifiedBy: ["PageSpeed Insights"],
+            source: "lighthouse",
           });
         }
         if (lighthouse.accessibility < 90) {
@@ -373,7 +414,10 @@ OUTPUT (JSON)
             description: `Accessibility score is ${lighthouse.accessibility}/100. Some users may face difficulty navigating.`,
             fixPrompt: "Check for color contrast, add missing labels to form elements, and ensure keyboard navigability.",
             evidence: `Lighthouse Accessibility Score: ${lighthouse.accessibility}`,
-            confidence: "high"
+            confidence: "high",
+            evidenceType: "tool-verified",
+            verifiedBy: ["PageSpeed Insights"],
+            source: "lighthouse",
           });
         }
         if (lighthouse.bestPractices < 90) {
@@ -384,7 +428,10 @@ OUTPUT (JSON)
             description: `The app score for best practices is ${lighthouse.bestPractices}/100.`,
             fixPrompt: "Ensure all resources are served over HTTPS and use modern image formats like WebP.",
             evidence: `Lighthouse Best Practices: ${lighthouse.bestPractices}`,
-            confidence: "high"
+            confidence: "high",
+            evidenceType: "tool-verified",
+            verifiedBy: ["PageSpeed Insights"],
+            source: "lighthouse",
           });
         }
       }
@@ -408,8 +455,10 @@ OUTPUT (JSON)
     // AI was used for at least one part. Keep deterministic findings in the
     // final report so measurable failures are not hidden by a successful LLM run.
     const backendRuleIssues = this.buildBackendMetricIssues(backendMetrics);
+    const taggedVision = (vision?.issues || []).map(i => ({ ...i, source: "ai-vision" as const }));
+    const taggedCode = (code?.issues || []).map(i => ({ ...i, source: "ai-code" as const }));
     const allIssues = mergeIssues(
-      [...(vision?.issues || []), ...(code?.issues || [])],
+      [...taggedVision, ...taggedCode],
       [...ruleIssues, ...backendRuleIssues]
     );
 
@@ -478,6 +527,11 @@ OUTPUT (JSON)
       provider: usedTools.join(" + "),
       lighthouse: lighthouse || undefined,
       backendMetrics: backendMetrics || undefined,
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      visionModelId: visionModelId || vision?.visionModelId,
+      codeModelId: codeModelId || code?.codeModelId,
     };
   }
 
@@ -495,6 +549,9 @@ OUTPUT (JSON)
         fixPrompt: "Review backend code for hardcoded secrets, unsafe eval/exec usage, raw HTML injection, and missing environment variable validation. Move all secrets to env vars and validate untrusted input before use.",
         evidence: `Static security score: ${backendMetrics.security}/100`,
         confidence: "high",
+        evidenceType: "tool-verified",
+        verifiedBy: ["Static Analyzer"],
+        source: "static-analyzer",
       });
     }
 
@@ -507,6 +564,9 @@ OUTPUT (JSON)
         fixPrompt: "Replace loose any types with explicit DTOs, remove noisy console.log calls from production paths, and wrap external I/O in structured try/catch blocks with typed errors.",
         evidence: `Static code quality score: ${backendMetrics.codeQuality}/100`,
         confidence: "medium",
+        evidenceType: "tool-verified",
+        verifiedBy: ["Static Analyzer"],
+        source: "static-analyzer",
       });
     }
 
@@ -519,6 +579,9 @@ OUTPUT (JSON)
         fixPrompt: "Split large backend files into focused modules, extract repeated logic into helpers, and flatten deeply nested control flow with early returns.",
         evidence: `Static maintainability score: ${backendMetrics.maintainability}/100`,
         confidence: "medium",
+        evidenceType: "tool-verified",
+        verifiedBy: ["Static Analyzer"],
+        source: "static-analyzer",
       });
     }
 

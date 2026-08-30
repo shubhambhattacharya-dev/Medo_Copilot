@@ -39,8 +39,9 @@ import {
   Cpu,
 } from "lucide-react";
 
-// ─── Types ────────────────────────────────────────────
+// --- Types --------------------------------------------
 type AuditResult = {
+  auditId?: string;
   launchScore: number;
   frontendScore?: number;
   backendScore?: number;
@@ -58,7 +59,7 @@ type AuditResult = {
   warning?: string;
 };
 
-// ─── Helpers ──────────────────────────────────────────
+// --- Helpers ------------------------------------------
 const severityOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
 const severityConfig = {
   high: { bg: "bg-red-500/10", text: "text-red-400", border: "border-red-500/20", dot: "bg-red-500", label: "High" },
@@ -102,7 +103,7 @@ async function copyText(text: string, label: string) {
   } catch { toast.error("Failed to copy. Please select and copy manually."); }
 }
 
-// ─── Loading Skeleton ─────────────────────────────────
+// --- Loading Skeleton ---------------------------------
 function AuditSkeleton() {
   return (
     <div className="min-h-screen bg-background">
@@ -122,7 +123,7 @@ function AuditSkeleton() {
   );
 }
 
-// ─── Empty State ──────────────────────────────────────
+// --- Empty State --------------------------------------
 function EmptyState() {
   const router = useRouter();
   return (
@@ -135,7 +136,7 @@ function EmptyState() {
       </div>
       <div>
         <h2 className="text-3xl font-bold tracking-tight">No audit report found</h2>
-        <p className="mt-3 max-w-md text-muted-foreground">Run an audit from the home page first — paste your app URL and we&apos;ll generate a full report.</p>
+        <p className="mt-3 max-w-md text-muted-foreground">Run an audit from the home page first - paste your app URL and we&apos;ll generate a full report.</p>
       </div>
       <Button onClick={() => router.push("/")} size="lg" className="rounded-2xl px-8 shadow-lg shadow-cyan-500/10">
         <ArrowLeft className="mr-2 h-4 w-4" /> Start New Audit
@@ -144,7 +145,7 @@ function EmptyState() {
   );
 }
 
-// ─── Error State ──────────────────────────────────────
+// --- Error State --------------------------------------
 function ErrorState({ error }: { error: string }) {
   const router = useRouter();
   return (
@@ -168,7 +169,7 @@ function ErrorState({ error }: { error: string }) {
   );
 }
 
-// ─── Main Page ────────────────────────────────────────
+// --- Main Page ----------------------------------------
 export default function AuditPage() {
   const router = useRouter();
 
@@ -184,7 +185,37 @@ export default function AuditPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setCurrentDate(new Date().toLocaleDateString());
 
-    try {
+    let cancelled = false;
+
+    async function loadAudit() {
+      const auditId = new URLSearchParams(window.location.search).get("id");
+
+      if (auditId) {
+        try {
+          const res = await fetch(`/api/audits/${encodeURIComponent(auditId)}`);
+          const payload = await res.json();
+
+          if (!res.ok || !payload?.success || !payload.data) {
+            throw new Error(payload?.error || "Could not load saved audit report.");
+          }
+
+          if (!cancelled) {
+            setData({ status: "ready", result: payload.data, errorMsg: "" });
+          }
+          return;
+        } catch (error) {
+          if (!cancelled) {
+            setData({
+              status: "error",
+              result: null,
+              errorMsg: error instanceof Error ? error.message : "Could not load saved audit report.",
+            });
+          }
+          return;
+        }
+      }
+
+      try {
       // Check localStorage first, then fallback to sessionStorage
       let raw = localStorage.getItem("medo_audit_result");
       if (!raw && typeof sessionStorage !== "undefined") {
@@ -192,7 +223,7 @@ export default function AuditPage() {
       }
 
       if (!raw) {
-        setData({ status: "empty", result: null, errorMsg: "" });
+        if (!cancelled) setData({ status: "empty", result: null, errorMsg: "" });
         return;
       }
       const parsed: AuditResult = JSON.parse(raw);
@@ -206,20 +237,26 @@ export default function AuditPage() {
         parsed.error
       ) {
         if (parsed.error && !parsed.issues?.length && parsed.launchScore === 0) {
-           setData({ status: "error", result: null, errorMsg: parsed.error });
+           if (!cancelled) setData({ status: "error", result: null, errorMsg: parsed.error });
         } else {
-           setData({ status: "ready", result: parsed, errorMsg: "" });
+           if (!cancelled) setData({ status: "ready", result: parsed, errorMsg: "" });
         }
       } else {
-        setData({ status: "empty", result: null, errorMsg: "" });
+        if (!cancelled) setData({ status: "empty", result: null, errorMsg: "" });
       }
     } catch {
-      setData({ status: "error", result: null, errorMsg: "Could not load audit data." });
+      if (!cancelled) setData({ status: "error", result: null, errorMsg: "Could not load audit data." });
     }
+    }
+
+    loadAudit();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
   const { status, result, errorMsg } = data;
   const [thinkingOpen, setThinkingOpen] = useState(false);
-  const [expandedIssue, setExpandedIssue] = useState<number | null>(null);
 
   if (status === "loading") return <AuditSkeleton />;
   if (status === "empty") return <EmptyState />;
@@ -239,7 +276,7 @@ export default function AuditPage() {
 
   return (
     <main className="relative min-h-screen bg-background text-foreground">
-      {/* ── Ambient Background ── */}
+      {/* -- Ambient Background -- */}
       <div className="pointer-events-none fixed inset-0">
         <div className="absolute -left-60 -top-40 h-[500px] w-[500px] rounded-full bg-cyan-500/[0.07] blur-[100px]" />
         <div className="absolute -right-40 top-20 h-[400px] w-[400px] rounded-full bg-emerald-500/[0.05] blur-[100px]" />
@@ -248,7 +285,7 @@ export default function AuditPage() {
 
       <div className="relative mx-auto w-full max-w-6xl px-4 pb-24 pt-6 sm:px-6">
 
-        {/* ── Header ── */}
+        {/* -- Header -- */}
         <header className="flex items-center justify-between">
           <button onClick={() => router.push("/")} className="group inline-flex items-center gap-2.5 rounded-2xl border border-border/50 bg-background/70 px-5 py-2.5 text-sm font-medium backdrop-blur-xl transition-all hover:border-border hover:bg-muted/40 hover:shadow-lg hover:shadow-black/5">
             <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" /> Home
@@ -261,13 +298,13 @@ export default function AuditPage() {
           </div>
         </header>
 
-        {/* ── Report Banner ── */}
+        {/* -- Report Banner -- */}
         <div className="mt-6 flex items-center gap-3 rounded-2xl border border-cyan-400/15 bg-gradient-to-r from-cyan-500/[0.06] to-transparent px-5 py-3.5 backdrop-blur-sm">
           <BadgeCheck className="h-4 w-4 shrink-0 text-cyan-400" />
-          <p className="text-xs leading-5 text-cyan-300/80"><span className="font-semibold text-cyan-300">{result.warning ? "Partial Evidence" : "Evidence-Based Audit"}</span> — This report is based on the screenshots, extracted page signals, Lighthouse metrics, static checks, and AI findings available for this run.</p>
+          <p className="text-xs leading-5 text-cyan-300/80"><span className="font-semibold text-cyan-300">{result.warning ? "Partial Evidence" : "Evidence-Based Audit"}</span> - This report is based on the screenshots, extracted page signals, Lighthouse metrics, static checks, and AI findings available for this run.</p>
         </div>
 
-        {/* ── Score Hero ── */}
+        {/* -- Score Hero -- */}
         <section className="mt-12 flex flex-col items-center gap-8">
           <div className="flex flex-wrap justify-center gap-12 sm:gap-24">
             <div className="flex flex-col items-center gap-4">
@@ -307,6 +344,15 @@ export default function AuditPage() {
                 <ExternalLink className="h-3 w-3" /> {result.auditedUrl.replace(/^https?:\/\//, "").slice(0, 35)}
               </a>
             )}
+            {result.auditId && (
+              <button
+                type="button"
+                onClick={() => copyText(window.location.href, "Report link")}
+                className="inline-flex items-center gap-1.5 rounded-full border border-border/40 bg-muted/30 px-3.5 py-1.5 text-[11px] font-medium text-muted-foreground backdrop-blur-sm transition-colors hover:text-foreground"
+              >
+                <ClipboardCopy className="h-3 w-3" /> Copy report link
+              </button>
+            )}
             <span className="inline-flex items-center gap-1.5 rounded-full border border-border/40 bg-muted/30 px-3.5 py-1.5 text-[11px] font-medium text-muted-foreground backdrop-blur-sm">
               <Clock className="h-3 w-3" /> {currentDate || "..."}
             </span>
@@ -322,7 +368,7 @@ export default function AuditPage() {
           )}
           {sortedIssues.length === 0 && !result.warning && <p className="text-sm text-emerald-400 font-medium">No issues found in the available evidence. Run manual QA before launch.</p>}
           
-          {/* ── AI Failure Warning Banner ── */}
+          {/* -- AI Failure Warning Banner -- */}
           {result.warning && (
             <div className="w-full mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 backdrop-blur-sm">
               <div className="flex items-start gap-3">
@@ -338,13 +384,13 @@ export default function AuditPage() {
           )}
         </section>
 
-        {/* ── Accuracy Warning ── */}
+        {/* -- Accuracy Warning -- */}
         <section className="mt-14">
           <div className="overflow-hidden rounded-2xl border border-amber-500/15 bg-gradient-to-br from-amber-500/[0.04] via-transparent to-transparent backdrop-blur-sm">
             <div className="flex items-start gap-4 p-5">
               <div className="mt-0.5 rounded-xl bg-amber-500/10 p-2"><AlertTriangle className="h-4 w-4 text-amber-400" /></div>
               <div className="flex-1">
-                <h3 className="text-sm font-bold text-amber-300">AI-Powered Analysis — Not 100% Accurate</h3>
+                <h3 className="text-sm font-bold text-amber-300">AI-Powered Analysis - Not 100% Accurate</h3>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   {[
                     "AI may misinterpret visual elements or miss context-specific nuances in page design.",
@@ -362,7 +408,7 @@ export default function AuditPage() {
           </div>
         </section>
 
-        {/* ── Methodology Pros/Cons ── */}
+        {/* -- Methodology Pros/Cons -- */}
         <section className="mt-8 grid gap-4 sm:grid-cols-2">
           <div className="rounded-2xl border border-cyan-500/10 bg-cyan-500/[0.02] p-6 backdrop-blur-sm">
             <div className="flex items-center gap-2 mb-4">
@@ -399,7 +445,7 @@ export default function AuditPage() {
           </div>
         </section>
 
-        {/* ── Lighthouse Metrics (if available) ── */}
+        {/* -- Lighthouse Metrics (if available) -- */}
         {result.lighthouse && (
           <section className="mt-14">
             <div className="mb-6 flex items-center gap-3">
@@ -439,7 +485,7 @@ export default function AuditPage() {
           </section>
         )}
 
-        {/* ── Backend Static Metrics (if available) ── */}
+        {/* -- Backend Static Metrics (if available) -- */}
         {result.backendMetrics && (
           <section className="mt-8">
             <div className="mb-6 flex items-center gap-3">
@@ -478,7 +524,54 @@ export default function AuditPage() {
           </section>
         )}
 
-        {/* ── Issues List ── */}
+        {/* -- Sources -- */}
+        <section className="mt-10">
+          <div className="mb-4 flex items-center gap-3">
+            <div className="rounded-xl bg-muted/40 p-2">
+              <ExternalLink className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold tracking-tight">Sources</h2>
+              <p className="text-xs text-muted-foreground">Cross-check these external tools and evidence</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {result.lighthouse && result.auditedUrl && (
+              <a
+                href={`https://pagespeed.web.dev/result/?url=${encodeURIComponent(result.auditedUrl)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-3 rounded-xl border border-border/50 bg-background/60 p-4 backdrop-blur-sm transition-colors hover:border-border hover:bg-muted/20"
+              >
+                <Gauge className="h-4 w-4 text-blue-400" />
+                <div>
+                  <p className="text-xs font-semibold">PageSpeed Insights</p>
+                  <p className="text-[11px] text-muted-foreground">View full Lighthouse report</p>
+                </div>
+              </a>
+            )}
+            {result.backendMetrics && (
+              <div className="flex items-center gap-3 rounded-xl border border-border/50 bg-background/60 p-4 backdrop-blur-sm">
+                <Cpu className="h-4 w-4 text-violet-400" />
+                <div>
+                  <p className="text-xs font-semibold">Static Code Analyzer</p>
+                  <p className="text-[11px] text-muted-foreground">Security, Quality, Maintainability heuristics</p>
+                </div>
+              </div>
+            )}
+            {result.provider && (
+              <div className="flex items-center gap-3 rounded-xl border border-border/50 bg-background/60 p-4 backdrop-blur-sm">
+                <Sparkles className="h-4 w-4 text-cyan-400" />
+                <div>
+                  <p className="text-xs font-semibold">AI Providers</p>
+                  <p className="text-[11px] text-muted-foreground">{result.provider}</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* -- Issues List -- */}
         <section className="mt-20">
           {sortedIssues.length > 0 ? (
             (() => {
@@ -487,7 +580,14 @@ export default function AuditPage() {
 
               const renderIssueCard = (issue: typeof sortedIssues[0], globalIdx: number) => {
                 const sev = severityConfig[issue.severity];
-                const isExpanded = expandedIssue === globalIdx;
+                const sourceLabel = issue.source ? issue.source.replace("-", " ") : "unknown";
+                const sourceColor = issue.source === "ai-vision" || issue.source === "ai-code"
+                  ? "bg-violet-500/10 text-violet-300 border-violet-500/20"
+                  : issue.source === "lighthouse"
+                    ? "bg-blue-500/10 text-blue-300 border-blue-500/20"
+                    : issue.source === "static-analyzer"
+                      ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
+                      : "bg-muted/40 text-muted-foreground border-border/40";
                 return (
                   <div key={`${issue.title}-${globalIdx}`} className="group relative overflow-hidden rounded-2xl border border-border/50 bg-background/60 backdrop-blur-xl transition-all duration-300 hover:border-border/80 hover:shadow-xl hover:shadow-black/[0.08]">
                     <div className={`absolute left-0 top-0 h-full w-1 ${sev.dot}`} />
@@ -499,22 +599,27 @@ export default function AuditPage() {
                             <h3 className="text-sm font-bold leading-snug">{issue.title}</h3>
                             <span className={`shrink-0 rounded-md ${sev.bg} px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${sev.text}`}>{sev.label}</span>
                           </div>
-                          {issue.category && <span className="mt-1 inline-block rounded-md bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">{categoryLabel(issue.category)}</span>}
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                            {issue.category && <span className="rounded-md bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">{categoryLabel(issue.category)}</span>}
+                            <span className={`rounded-md border px-2 py-0.5 text-[10px] font-medium capitalize ${sourceColor}`}>{sourceLabel}</span>
+                          </div>
                         </div>
                       </div>
                       <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{issue.description}</p>
-                      {(issue.evidence || issue.confidence) && (
-                        <button onClick={() => setExpandedIssue(isExpanded ? null : globalIdx)} className="mt-2.5 inline-flex items-center gap-1 text-[11px] font-medium text-cyan-400 transition-colors hover:text-cyan-300">
-                          {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                          {isExpanded ? "Hide details" : "Show evidence"}
-                        </button>
-                      )}
-                      {isExpanded && (
-                        <div className="mt-2 space-y-1.5 rounded-xl border border-border/30 bg-muted/20 p-3.5 text-[11px] leading-5 text-muted-foreground">
-                          {issue.evidence && <p><strong className="text-foreground/70">Evidence:</strong> {issue.evidence}</p>}
-                          {issue.confidence && <p><strong className="text-foreground/70">Confidence:</strong> <span className={issue.confidence === "high" ? "text-emerald-400" : issue.confidence === "medium" ? "text-amber-400" : "text-blue-400"}>{issue.confidence}</span></p>}
+                      {issue.evidence && (
+                        <div className="mt-3 rounded-xl border border-border/30 bg-muted/20 p-3 text-[11px] leading-5 text-muted-foreground">
+                          <span className="font-semibold text-foreground/70">Evidence: </span>{issue.evidence}
                         </div>
                       )}
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                        {issue.confidence && (
+                          <span className="inline-flex items-center gap-1">
+                            Confidence: <span className={`font-semibold ${issue.confidence === "high" ? "text-emerald-400" : issue.confidence === "medium" ? "text-amber-400" : "text-blue-400"}`}>{issue.confidence}</span>
+                          </span>
+                        )}
+                        {issue.evidenceType && <span>• Type: {categoryLabel(issue.evidenceType)}</span>}
+                        {issue.verifiedBy?.length ? <span>• Verified by: {issue.verifiedBy.join(", ")}</span> : null}
+                      </div>
                       <button onClick={() => copyText(issue.fixPrompt, "Fix prompt")} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-border/40 bg-muted/20 py-2.5 text-xs font-semibold text-muted-foreground transition-all hover:border-cyan-500/30 hover:bg-cyan-500/5 hover:text-cyan-400">
                         <Copy className="h-3.5 w-3.5" /> Copy Fix Prompt
                       </button>
@@ -589,7 +694,7 @@ export default function AuditPage() {
           )}
         </section>
 
-        {/* ── Improvement Prompt ── */}
+        {/* -- Improvement Prompt -- */}
         {result.improvementPrompt && (
           <section className="mt-14">
             <div className="overflow-hidden rounded-2xl border border-emerald-500/15 bg-gradient-to-br from-emerald-500/[0.04] via-transparent to-transparent backdrop-blur-sm">
@@ -612,7 +717,7 @@ export default function AuditPage() {
           </section>
         )}
 
-        {/* ── AI Thinking Process ── */}
+        {/* -- AI Thinking Process -- */}
         {result.thoughtProcess && result.thoughtProcess.length > 0 && (
           <section className="mt-14">
             <button onClick={() => setThinkingOpen(!thinkingOpen)} className="flex w-full items-center justify-between rounded-2xl border border-border/50 bg-background/60 p-5 text-left backdrop-blur-xl transition-all hover:border-border/80 hover:shadow-lg hover:shadow-black/5">
@@ -639,11 +744,11 @@ export default function AuditPage() {
           </section>
         )}
 
-        {/* ── Footer ── */}
+        {/* -- Footer -- */}
         <footer className="mt-16 flex flex-col items-center gap-6 border-t border-border/30 pt-10">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
-            Powered by <strong className="text-foreground">Medo Copilot</strong> — AI Launch Auditor
+            Powered by <strong className="text-foreground">Medo Copilot</strong> - AI Launch Auditor
           </div>
           <Button onClick={() => { localStorage.removeItem("medo_audit_result"); router.push("/"); }} variant="outline" size="lg" className="rounded-2xl px-8">
             <RotateCcw className="mr-2 h-4 w-4" /> Run Another Audit

@@ -1,89 +1,138 @@
-# 🚀 Medo Copilot: The Launch-Readiness Auditor
+# Medo Copilot: Launch-Readiness Auditor
 
-**Medo Copilot** isn't just another technical auditor. While tools like Lighthouse tell you if your code is *clean*, Medo Copilot tells you if your app is *ready to sell*. It bridges the gap between "it works" and "it converts."
+Medo Copilot audits whether a web app is ready to show customers, not just whether it technically loads. It combines deterministic checks, screenshots, static code analysis, Lighthouse/PageSpeed metrics, and AI review to produce prioritized launch-readiness findings.
 
----
+## What It Checks
 
-## 🧠 The Philosophy: Technical vs. Conversion
-Most tools (Antigravity, Lighthouse) give you a **90/100** if your HTML is valid and your site is fast. 
-**Medo Copilot might give that same site a 60/100.** 
+- UX clarity: headline, value proposition, CTA visibility, and mobile readability.
+- Trust and conversion: social proof, clear next actions, and friction in the first screen.
+- Accessibility and SEO basics: missing titles, meta descriptions, viewport tags, and image alt text.
+- Performance: PageSpeed/Lighthouse scores when available.
+- Backend/code risk: selected GitHub backend files, static security heuristics, and AI code review when configured.
+- Evidence quality: each issue includes confidence and verification metadata.
 
-Why? Because if your "Shop Now" button is buried, your value proposition is generic, and you have zero social proof, your app is "Broken" from a business perspective. We audit for:
-- **UX/UI Hierarchy:** Is the focus on the right place?
-- **Conversion Friction:** Are you making it hard for users to take action?
-- **Trust Signals:** Do users feel safe buying from you?
-- **Code Integrity:** Is your backend leaking secrets?
+## Accuracy Positioning
 
----
+Medo Copilot is an evidence-based assistant, not a guarantee. Customer reports should treat findings as prioritized recommendations:
 
-## ✨ Key Features
+- Tool-verified findings are safe to present as detected issues.
+- Screenshot/text findings are useful but may need product-context review.
+- AI-inference findings should be reviewed manually before making strong claims.
 
-### 1. 🤖 Hybrid AI Scoring Engine
-We use a weighted scoring algorithm that combines:
-- **60% AI Insights:** Deep reasoning from LLMs (Gemini 2.0, Llama 4 Scout) on UX and Logic.
-- **40% Hard Data:** Deterministic metrics from Google Lighthouse (Performance/SEO) and our custom Static Analyzer.
+Do not market the product as 100% accurate. A safer claim is:
 
-### 2. 🌊 Resilient Multi-Provider Pipeline
-Never face "AI Downtime." Our system implements a **Waterfall Fallback Chain**:
-- Primary: **Google Gemini 2.0 Flash** (Best for Vision).
-- Secondary: **Groq (Llama 4 Scout)** (Extreme Speed).
-- Tertiary: **OpenRouter** (Claude 3.5 Sonnet / GPT-4).
+> Medo Copilot provides an evidence-based launch-readiness audit using screenshots, page signals, Lighthouse metrics, static checks, and AI review. Results should be treated as prioritized recommendations and verified before production release.
 
-### 3. 👁️ Visual Intelligence (Vision-First)
-Unlike text-only auditors, we capture desktop and mobile screenshots using **Playwright**. The AI reviews visual evidence alongside extracted page text and deterministic signals, then labels findings with confidence.
+## Tech Stack
 
-### 4. 🛡️ Static Backend Security Audit
-Our built-in static analyzer scans your repository code for:
-- **Hardcoded Secrets:** API Keys, Firebase configs, or Stripe keys.
-- **Code Quality:** Excessive `any` types, missing `try/catch` in async functions.
-- **Maintainability:** Deeply nested logic or monolithic files.
+- Next.js 16 App Router
+- TypeScript strict mode
+- Vercel AI SDK providers
+- Playwright screenshot capture
+- Cheerio static HTML extraction
+- Neon serverless Postgres
+- Clerk authentication
+- Tailwind CSS and shadcn-style UI
 
-### 5. 🔑 BYOK (Bring Your Own Key)
-Designed for flexibility. Users can use our server's default models or provide their own API keys for Gemini, Groq, or OpenRouter to bypass rate limits.
+## AI Models
 
----
+Medo Copilot uses a multi-provider fallback chain for AI analysis:
 
-## 🛠️ Tech Stack
-- **Framework:** Next.js 16 (App Router) + TypeScript
-- **AI SDK:** Vercel AI SDK (Unified interface for all LLMs)
-- **Browsing:** Playwright + Cheerio (Scraping & Screenshots)
-- **Styling:** Tailwind CSS + Shadcn/UI
-- **Auth:** Clerk
+| Provider | Default Model | Use Case |
+|----------|--------------|----------|
+| Google Gemini | `gemini-3.6-flash` | Vision analysis (primary) |
+| Groq | `qwen/qwen3.6-27b` | Vision fallback (free tier) |
+| OpenRouter | `anthropic/claude-3.5-sonnet` | Code analysis |
+| Tencent | `tencent/hunyuan-a13b-instruct` | General analysis |
+| Poolside | `poolside/laguna-m-1` | Code analysis |
+| NVIDIA | `nvidia/llama-3.1-nemotron-70b-instruct` | Code analysis |
+| Mimo | `mimo-1` | Alternative model |
 
----
+Model upgrades are centralized in `src/lib/constants.ts` to handle deprecations in one place.
 
-## ⚙️ Centralized Tuning
-We believe in maintainability. All critical logic is centralized:
-- **`src/lib/constants.ts`**: Update model mappings (e.g., upgrading to Llama 5) or adjust the **Scoring Weights** (e.g., making the auditor 80% AI-driven).
-- **`src/services/ai-service.ts`**: The core logic for provider initialization and model resolution.
+## Setup
 
----
+```bash
+npm ci
+cp .env.example .env.local
+npm run dev
+```
 
-## 🚀 Getting Started
+Required production environment variables:
 
-1. **Clone & Install:**
-   ```bash
-   npm install
-   ```
+```env
+DATABASE_URL=
+ENCRYPTION_MASTER_KEY=64_hex_characters
+GOOGLE_GENERATIVE_AI_API_KEY=
+```
 
-2. **Env Setup:** Create a `.env.local` with:
-   ```env
-   GOOGLE_GENERATIVE_AI_API_KEY=your_key
-   GROQ_API_KEY=your_key
-   OPENROUTER_API_KEY=your_key
-   DATABASE_URL=your_neon_database_url
-   ENCRYPTION_MASTER_KEY=64_hex_characters_for_saved_user_keys
-   PAGESPEED_API_KEY=optional_google_pagespeed_key
-   ```
+At least one AI provider key should be configured for production. Optional keys include `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `PAGESPEED_API_KEY`, and `GITHUB_TOKEN`.
 
-3. **Run Dev:**
-   ```bash
-   npm run dev
-   ```
+`DATABASE_URL` is required in production because audit persistence, user API key storage, and rate limiting all depend on Postgres. Production startup also requires `ENCRYPTION_MASTER_KEY` so stored user keys can be encrypted with AES-256-GCM.
 
----
+## Database Migrations
 
-## 📈 Accuracy Statement
-Medo Copilot is an **evidence-based launch-readiness assistant**, not a replacement for manual QA, security review, or user testing. It improves accuracy by combining structured LLM output, desktop/mobile screenshots, Lighthouse/PageSpeed metrics, static code heuristics, and confidence labels. Production launch decisions should use this report as a triage layer and verify high-impact findings manually.
+Run migrations before deploying production:
 
-**Stop guessing. Start auditing. Launch with Medo Copilot.**
+```bash
+npm run migrate
+```
+
+Runtime table creation is disabled in production. Development still creates missing tables for convenience.
+
+## Free Public Launch Limits
+
+The free public launch uses quota limits instead of billing:
+
+- Anonymous users: 3 audit quota units per minute and 8 quota units per hour.
+- Signed-in users: 8 audit quota units per minute and 30 quota units per hour.
+- A standard URL audit costs 1 quota unit.
+- Uploaded screenshot audits add 2 quota units.
+- GitHub repository analysis adds 1 quota unit.
+- Forced refreshes add 1 quota unit.
+
+These limits protect expensive browser, Lighthouse, GitHub, and AI work while keeping the product usable for public trials. For paid SaaS, add account-level plans, billing enforcement, an audit history dashboard, monitoring alerts, and stronger abuse tooling such as CAPTCHA or Turnstile.
+
+## Verification
+
+Run the standard production checks:
+
+```bash
+npm run verify
+```
+
+Run browser end-to-end tests:
+
+```bash
+npm run test:e2e
+```
+
+Run everything:
+
+```bash
+npm run verify:full
+```
+
+## Deployment Checklist
+
+- Configure `DATABASE_URL`, `ENCRYPTION_MASTER_KEY`, and at least one AI provider key.
+- Run `npm run migrate` against the production database before deploy.
+- Run `npm run verify`; run `npm run test:e2e` in an environment where Playwright can reach localhost.
+- Confirm `/api/user/settings` is protected by Clerk middleware.
+- Confirm anonymous report links load only audits with no owner and user-owned reports require the matching signed-in user.
+- Confirm public quota limits are acceptable for the launch announcement volume.
+- Add monitoring for `/api/analyze` latency, error rate, rate-limit responses, and audit-save failures.
+
+## Customer Report Guidance
+
+Every finding should include:
+
+- Issue title
+- Severity
+- Confidence
+- Evidence
+- Evidence type
+- Verified-by sources
+- Suggested fix
+
+This keeps reports honest: deterministic findings are separated from subjective AI recommendations.

@@ -6,7 +6,14 @@
     "dev": "next dev --webpack",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "migrate": "tsx scripts/migrate.ts",
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run build",
+    "verify:full": "npm run verify && npm run test:e2e"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.65",
@@ -21,8 +28,8 @@
     "cheerio": "^1.2.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    
     "framer-motion": "^12.38.0",
+    "langfuse": "^3.38.20",
     "lucide-react": "^1.14.0",
     "next": "16.2.4",
     "next-themes": "^0.4.6",
@@ -37,6 +44,7 @@
     "zod": "^4.4.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
@@ -46,6 +54,7 @@
     "eslint-config-next": "16.2.4",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.11"
   }
 }

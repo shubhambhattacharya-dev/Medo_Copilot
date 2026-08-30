@@ -36,13 +36,21 @@ interface UserSettings {
   hasCodeKey: boolean;
 }
 
+interface SaveSettingsResponse {
+  success: boolean;
+  settings?: UserSettings;
+  error?: string;
+}
+
 export default function SettingsPage() {
   const { user, isLoaded: userLoaded } = useUser();
   
   const [visionProvider, setVisionProvider] = useState("default");
   const [visionKey, setVisionKey] = useState("");
+  const [hasVisionKey, setHasVisionKey] = useState(false);
   const [codeProvider, setCodeProvider] = useState("default");
   const [codeKey, setCodeKey] = useState("");
+  const [hasCodeKey, setHasCodeKey] = useState(false);
   
   const [showVisionKey, setShowVisionKey] = useState(false);
   const [showCodeKey, setShowCodeKey] = useState(false);
@@ -68,6 +76,8 @@ export default function SettingsPage() {
           const data: UserSettings = await res.json();
           setVisionProvider(data.visionProvider || "default");
           setCodeProvider(data.codeProvider || "default");
+          setHasVisionKey(data.hasVisionKey);
+          setHasCodeKey(data.hasCodeKey);
         }
       } catch (err) {
         console.error("Failed to load settings:", err);
@@ -107,7 +117,7 @@ export default function SettingsPage() {
         }),
       });
 
-      const data = await res.json();
+      const data: SaveSettingsResponse = await res.json();
 
       if (!res.ok) {
         throw new Error(data.error || "Failed to save");
@@ -116,10 +126,61 @@ export default function SettingsPage() {
       setSaved(true);
       setVisionKey("");
       setCodeKey("");
+      if (data.settings) {
+        setVisionProvider(data.settings.visionProvider || "default");
+        setCodeProvider(data.settings.codeProvider || "default");
+        setHasVisionKey(data.settings.hasVisionKey);
+        setHasCodeKey(data.settings.hasCodeKey);
+      }
       toast.success("Settings saved successfully!");
     } catch (err) {
       console.error("Save error:", err);
       toast.error(err instanceof Error ? err.message : "Failed to save settings");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleClearKey = async (kind: "vision" | "code") => {
+    if (!user) {
+      toast.error("Please sign in to update settings");
+      return;
+    }
+
+    setSaving(true);
+    setSaved(false);
+
+    try {
+      const res = await fetch("/api/user/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          kind === "vision"
+            ? { visionProvider, visionKey: null, codeProvider }
+            : { visionProvider, codeProvider, codeKey: null }
+        ),
+      });
+
+      const data: SaveSettingsResponse = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to clear key");
+      }
+
+      setVisionKey("");
+      setCodeKey("");
+      if (data.settings) {
+        setVisionProvider(data.settings.visionProvider || "default");
+        setCodeProvider(data.settings.codeProvider || "default");
+        setHasVisionKey(data.settings.hasVisionKey);
+        setHasCodeKey(data.settings.hasCodeKey);
+      }
+
+      setSaved(true);
+      toast.success("API key removed");
+    } catch (err) {
+      console.error("Clear key error:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to clear key");
     } finally {
       setSaving(false);
     }
@@ -250,6 +311,20 @@ export default function SettingsPage() {
                     Get key from provider&apos;s dashboard. Leave empty to use system keys.
                   </p>
                 )}
+                {hasVisionKey && (
+                  <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/20 px-3 py-2">
+                    <span className="text-xs text-muted-foreground">A vision API key is saved.</span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={saving}
+                      onClick={() => handleClearKey("vision")}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -309,6 +384,20 @@ export default function SettingsPage() {
                     Get key from provider&apos;s dashboard. Leave empty to use system keys.
                   </p>
                 )}
+                {hasCodeKey && (
+                  <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-muted/20 px-3 py-2">
+                    <span className="text-xs text-muted-foreground">A code API key is saved.</span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={saving}
+                      onClick={() => handleClearKey("code")}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -332,7 +421,7 @@ export default function SettingsPage() {
           {saved && (
             <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-500/10 text-emerald-400 text-sm">
               <CheckCircle2 className="h-4 w-4" />
-              Your API settings are saved! They will be Used for analysis.
+              Your API settings are saved. They will be used for analysis.
             </div>
           )}
 
@@ -353,10 +442,10 @@ export default function SettingsPage() {
           <div className="rounded-xl border border-border/40 bg-muted/20 p-4 text-sm text-muted-foreground">
             <h4 className="font-medium text-foreground mb-2">About API Modes</h4>
             <ul className="space-y-1 text-xs">
-              <li>• <strong>Default (Recommended):</strong> Uses server keys with automatic fallback</li>
-              <li>• <strong>Gemini:</strong> Best for analyzing screenshots visually</li>
-              <li>• <strong>Groq:</strong> Free, fast, good for text analysis</li>
-              <li>• <strong>OpenRouter:</strong> Access to Claude, requires your own key</li>
+              <li>- <strong>Default (Recommended):</strong> Uses server keys with automatic fallback</li>
+              <li>- <strong>Gemini:</strong> Best for analyzing screenshots visually</li>
+              <li>- <strong>Groq:</strong> Free, fast, good for text analysis</li>
+              <li>- <strong>OpenRouter:</strong> Access to Claude, requires your own key</li>
             </ul>
           </div>
         </div>

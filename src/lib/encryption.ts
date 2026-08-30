@@ -1,9 +1,10 @@
 import crypto from "crypto";
+import { getServerEnv } from "./env";
 
 // Ensure this key is exactly 32 bytes (256 bits) long in your environment variables.
 // You can generate one via: openssl rand -hex 32
 const getMasterKey = () => {
-  const key = process.env.ENCRYPTION_MASTER_KEY;
+  const key = getServerEnv().ENCRYPTION_MASTER_KEY;
   if (!key) {
     throw new Error("ENCRYPTION_MASTER_KEY is not defined in environment variables");
   }

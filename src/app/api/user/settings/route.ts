@@ -1,51 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { saveUserSettings, ensureUserSettingsTable } from "@/lib/audits";
+import { saveUserSettings, getUserSettingsSummary } from "@/lib/audits";
+import { assertProductionEnv } from "@/lib/env";
 import { z } from "zod";
 
 const settingsSchema = z.object({
   visionProvider: z.enum(["default", "gemini", "groq", "openrouter", "tencent", "poolside", "nvidia", "mimo"]).optional(),
-  visionKey: z.string().max(200).optional().nullable(),
+  visionKey: z.string().max(512).optional().nullable(),
   codeProvider: z.enum(["default", "gemini", "groq", "openrouter", "tencent", "poolside", "nvidia", "mimo"]).optional(),
-  codeKey: z.string().max(200).optional().nullable(),
+  codeKey: z.string().max(512).optional().nullable(),
 });
 
 export async function GET() {
   try {
+    assertProductionEnv();
+
     const { userId } = await auth();
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const db = await ensureUserSettingsTable();
-    
-    if (!db) {
-      return NextResponse.json({
-        visionProvider: "default",
-        hasVisionKey: false,
-        codeProvider: "default",
-        hasCodeKey: false,
-      });
-    }
-
-    const rows = await db`
-      SELECT vision_provider, vision_api_key_encrypted, code_provider, code_api_key_encrypted 
-      FROM user_settings 
-      WHERE user_id = ${userId}
-    ` as Array<{
-      vision_provider: string;
-      vision_api_key_encrypted: string | null;
-      code_provider: string;
-      code_api_key_encrypted: string | null;
-    }>;
-
-    const row = rows[0];
-    return NextResponse.json({
-      visionProvider: row?.vision_provider || "default",
-      hasVisionKey: !!row?.vision_api_key_encrypted,
-      codeProvider: row?.code_provider || "default",
-      hasCodeKey: !!row?.code_api_key_encrypted,
-    });
+    return NextResponse.json(await getUserSettingsSummary(userId));
   } catch (error) {
     console.error("Error fetching user settings:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
@@ -54,6 +29,8 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
+    assertProductionEnv();
+
     const { userId } = await auth();
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -71,24 +48,39 @@ export async function POST(req: NextRequest) {
 
     // Only update keys if they are provided. If they are empty strings, it means the user didn't change them.
     // If they want to delete them, they would send `null`. Let's assume empty string means "no change".
-    const updateData: Record<string, string | undefined> = {
+    const updateData: {
+      visionProvider?: string;
+      visionKey?: string | null;
+      codeProvider?: string;
+      codeKey?: string | null;
+    } = {
       visionProvider,
       codeProvider,
     };
 
-    // If the user provided a key string that is not masked (i.e. we don't send it back anyway, but if they enter a new one)
-if (visionKey !== undefined && visionKey !== null && visionKey !== "") {
-      updateData.visionKey = visionKey;
+    const normalizedVisionKey = typeof visionKey === "string" ? visionKey.trim() : visionKey;
+    const normalizedCodeKey = typeof codeKey === "string" ? codeKey.trim() : codeKey;
+
+    if (normalizedVisionKey === null) {
+      updateData.visionKey = null;
+    } else if (normalizedVisionKey) {
+      updateData.visionKey = normalizedVisionKey;
     }
-    if (codeKey !== undefined && codeKey !== null && codeKey !== "") {
-      updateData.codeKey = codeKey;
+
+    if (normalizedCodeKey === null) {
+      updateData.codeKey = null;
+    } else if (normalizedCodeKey) {
+      updateData.codeKey = normalizedCodeKey;
     }
 
     await saveUserSettings(userId, Object.fromEntries(
       Object.entries(updateData).filter(([, v]) => v !== undefined)
     ));
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({
+      success: true,
+      settings: await getUserSettingsSummary(userId),
+    });
   } catch (error) {
     console.error("Error saving user settings:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });

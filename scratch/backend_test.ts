@@ -5,7 +5,7 @@ const express = require('express');
 const app = express();
 
 // Issue 1: Hardcoded secret (Security)
-const API_KEY = "AIzaSyD-1234567890abcdef";
+const API_KEY = "REPLACE_WITH_REAL_KEY";
 
 app.get('/data', async (req, res) => {
   // Issue 2: Missing error handling (Reliability)

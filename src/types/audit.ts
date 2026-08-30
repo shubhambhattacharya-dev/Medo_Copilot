@@ -2,7 +2,7 @@ import { z } from "zod";
 
 // ============================================
 // CANONICAL TYPE DEFINITIONS
-// All audit-related types live here — single source of truth
+// All audit-related types live here - single source of truth
 // ============================================
 
 export const IssueCategorySchema = z.enum([
@@ -30,6 +30,9 @@ export type AuditIssue = {
   fixPrompt: string;
   evidence?: string;
   confidence?: "high" | "medium" | "low";
+  evidenceType?: "tool-verified" | "screenshot-or-text" | "ai-inference" | "manual-review";
+  verifiedBy?: string[];
+  source?: "ai-vision" | "ai-code" | "lighthouse" | "static-analyzer" | "rule-based";
 };
 
 export type AuditVerdict = "launch-ready" | "needs-fixes" | "broken";
@@ -68,6 +71,18 @@ export const ResultSchema = z.object({
           .enum(["high", "medium", "low"])
           .optional()
           .describe("How strongly the available page evidence supports this issue"),
+        evidenceType: z
+          .enum(["tool-verified", "screenshot-or-text", "ai-inference", "manual-review"])
+          .optional()
+          .describe("Whether this issue is verified by a deterministic tool, visible/text evidence, AI inference, or requires manual review"),
+        verifiedBy: z
+          .array(z.string())
+          .optional()
+          .describe("Tools or evidence sources that support this finding"),
+        source: z
+          .enum(["ai-vision", "ai-code", "lighthouse", "static-analyzer", "rule-based"])
+          .optional()
+          .describe("The source that generated this finding"),
       })
     )
     .describe("List of every important UX/UI/trust issue found on the page"),
@@ -99,6 +114,11 @@ export type AuditResponse = z.infer<typeof ResultSchema> & {
   backendMetrics?: BackendMetrics;
   warning?: string;
   auditedUrl?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  visionModelId?: string;
+  codeModelId?: string;
 };
 
 /**

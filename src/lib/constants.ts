@@ -3,7 +3,7 @@ import { ShieldCheck, Smartphone, Gauge } from "lucide-react";
 export const AI_PROVIDERS = [
   { value: "default", label: "Default (Free Tier)", hint: "Uses server API keys" },
   { value: "gemini", label: "Google Gemini", hint: "Best for vision + structured output" },
-  { value: "groq", label: "Groq (Llama)", hint: "Fastest inference speed" },
+  { value: "groq", label: "Groq (Qwen Vision)", hint: "Fastest inference speed" },
   { value: "openrouter", label: "OpenRouter (Claude)", hint: "Requires your own API key" },
   { value: "tencent", label: "Tencent Hunyuan", hint: "Good general accuracy (OpenRouter)" },
   { value: "poolside", label: "Poolside", hint: "Optimized for code analysis (OpenRouter)" },
@@ -17,17 +17,21 @@ export const AI_PROVIDERS = [
  */
 export const MODEL_UPGRADES: Record<string, string> = {
   // Gemini
-  "gemini-1.5-flash": "gemini-2.0-flash",
-  "gemini-1.5-flash-latest": "gemini-2.0-flash",
-  "gemini-2.0-flash-exp": "gemini-2.0-flash",
+  "gemini-1.5-flash": "gemini-3.6-flash",
+  "gemini-1.5-flash-latest": "gemini-3.6-flash",
+  "gemini-2.0-flash": "gemini-3.6-flash",
+  "gemini-2.0-flash-exp": "gemini-3.6-flash",
+  "gemini-2.5-flash": "gemini-3.6-flash",
   
   // Groq
-  "llama-3.2-90b-vision-preview": "llama-4-scout-17b-16e-instruct",
+  "llama-3.2-90b-vision-preview": "qwen/qwen3.6-27b",
+  "llama-4-scout-17b-16e-instruct": "qwen/qwen3.6-27b",
+  "llama-3.3-70b-versatile": "qwen/qwen3.6-27b",
 };
 
 export const DEFAULT_MODELS: Record<string, string> = {
-  gemini: "gemini-2.0-flash",
-  groq: "llama-4-scout-17b-16e-instruct",
+  gemini: "gemini-3.6-flash",
+  groq: "qwen/qwen3.6-27b",
   openrouter: "anthropic/claude-3.5-sonnet",
   tencent: "tencent/hunyuan-a13b-instruct",
   poolside: "poolside/laguna-m-1",

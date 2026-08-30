@@ -23,7 +23,7 @@ async function runMasterTest() {
 
   // 2. Mock Backend Code (GitHub)
   const githubCode = `
-    const API_KEY = "AIzaSyD-12345";
+    const API_KEY = "REPLACE_WITH_REAL_KEY";
     async function getData() {
       return await fetch('/api'); // No try-catch
     }

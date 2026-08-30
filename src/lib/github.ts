@@ -1,4 +1,6 @@
 // Server-safe rate-limit cache (replaces browser-only sessionStorage)
+import { getServerEnv } from "./env";
+
 const rateLimitCache = new Map<string, number>();
 
 function parseGithubUrl(githubUrl: string) {
@@ -37,10 +39,15 @@ export async function fetchGithubRepoCode(githubUrl: string): Promise<{ text: st
     const parsed = parseGithubUrl(githubUrl);
     if (!parsed) return { text: "", reason: "Invalid GitHub URL format." };
     const { owner, repo } = parsed;
+    const token = getServerEnv().GITHUB_TOKEN;
+    const headers: HeadersInit = {
+      "Accept": "application/vnd.github.v3+json",
+      ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+    };
 
     console.log(`Fetching GitHub tree for ${owner}/${repo}...`);
     const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
-      headers: { "Accept": "application/vnd.github.v3+json" }
+      headers,
     });
 
     // Handle 403 rate limit
@@ -58,7 +65,7 @@ export async function fetchGithubRepoCode(githubUrl: string): Promise<{ text: st
     const branch = parsed.branch || defaultBranch;
 
     const treeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`, {
-      headers: { "Accept": "application/vnd.github.v3+json" }
+      headers,
     });
 
     // Handle 403 rate limit
@@ -106,7 +113,9 @@ export async function fetchGithubRepoCode(githubUrl: string): Promise<{ text: st
 
     let codeText = `Repository: ${owner}/${repo}\nBranch: ${branch}\n\n`;
     for (const file of backendFiles) {
-      const fileRes = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/${encodePath(branch)}/${encodePath(file.path)}`);
+      const fileRes = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/${encodePath(branch)}/${encodePath(file.path)}`, {
+        headers: token ? { "Authorization": `Bearer ${token}` } : undefined,
+      });
       if (fileRes.ok) {
         const content = await fileRes.text();
         codeText += `--- File: ${file.path} ---\n${content.substring(0, 6000)}\n\n`;

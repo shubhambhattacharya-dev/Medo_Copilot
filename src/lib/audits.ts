@@ -1,5 +1,6 @@
 import { neon } from "@neondatabase/serverless";
 import { encrypt, decrypt } from "./encryption";
+import { getServerEnv } from "./env";
 
 type SaveAuditInput = {
   url: string;
@@ -16,18 +17,41 @@ type SaveAuditInput = {
   userId?: string;
 };
 
+type AuditRow = {
+  id: string;
+  url: string;
+  launch_score: number;
+  verdict: string | null;
+  summary: string | null;
+  issues: unknown;
+  improvement_prompt: string | null;
+  analysis_mode: string | null;
+  provider: string | null;
+  lighthouse: unknown;
+  backend_metrics: unknown;
+  user_id: string | null;
+  warning: string | null;
+  created_at: string;
+};
+
 let sql: ReturnType<typeof neon> | null = null;
 let tableReady = false;
 
 function getSql() {
-  if (!process.env.DATABASE_URL) return null;
-  sql ??= neon(process.env.DATABASE_URL);
+  const env = getServerEnv();
+  if (!env.DATABASE_URL) return null;
+  sql ??= neon(env.DATABASE_URL);
   return sql;
 }
 
 async function ensureAuditTable() {
   const db = getSql();
   if (!db || tableReady) return db;
+
+  if (getServerEnv().NODE_ENV === "production") {
+    tableReady = true;
+    return db;
+  }
 
   await db`
     CREATE TABLE IF NOT EXISTS audits (
@@ -67,6 +91,25 @@ async function ensureAuditTable() {
 
   tableReady = true;
   return db;
+}
+
+function mapAuditRow(row: AuditRow) {
+  return {
+    auditId: row.id,
+    url: row.url,
+    auditedUrl: row.url,
+    launchScore: row.launch_score,
+    verdict: row.verdict,
+    summary: row.summary,
+    issues: row.issues,
+    improvementPrompt: row.improvement_prompt,
+    analysisMode: row.analysis_mode,
+    provider: row.provider,
+    lighthouse: row.lighthouse,
+    backendMetrics: row.backend_metrics,
+    warning: row.warning,
+    createdAt: row.created_at,
+  };
 }
 
 export async function saveAudit(input: SaveAuditInput) {
@@ -125,46 +168,41 @@ export async function getCachedAudit(url: string, userId?: string | null) {
       AND created_at >= ${oneHourAgo.toISOString()}
     ORDER BY created_at DESC
     LIMIT 1
-  `) as Array<{
-    id: string;
-    url: string;
-    launch_score: number;
-    verdict: string | null;
-    summary: string | null;
-    issues: unknown;
-    improvement_prompt: string | null;
-    analysis_mode: string | null;
-    provider: string | null;
-    lighthouse: unknown;
-    backend_metrics: unknown;
-    user_id: string | null;
-    warning: string | null;
-    created_at: string;
-  }>;
+  `) as AuditRow[];
 
   if (!rows[0]) return null;
 
+  return mapAuditRow(rows[0]);
+}
+
+export async function getAuditById(auditId: string, userId?: string | null) {
+  const db = await ensureAuditTable();
+  if (!db) return null;
+
+  const rows = (await db`
+    SELECT *
+    FROM audits
+    WHERE id = ${auditId}
+    LIMIT 1
+  `) as AuditRow[];
+
   const row = rows[0];
-  return {
-    id: row.id,
-    url: row.url,
-    launchScore: row.launch_score,
-    verdict: row.verdict,
-    summary: row.summary,
-    issues: row.issues,
-    improvementPrompt: row.improvement_prompt,
-    analysisMode: row.analysis_mode,
-    provider: row.provider,
-    lighthouse: row.lighthouse,
-    backendMetrics: row.backend_metrics,
-    warning: row.warning,
-    createdAt: row.created_at,
-  };
+  if (!row) return null;
+
+  if (row.user_id && row.user_id !== userId) {
+    return null;
+  }
+
+  return mapAuditRow(row);
 }
 
 export async function ensureUserSettingsTable() {
   const db = getSql();
   if (!db) return db;
+
+  if (getServerEnv().NODE_ENV === "production") {
+    return db;
+  }
 
   await db`
     CREATE TABLE IF NOT EXISTS user_settings (
@@ -208,6 +246,37 @@ export async function getUserSettings(userId: string) {
   };
 }
 
+export async function getUserSettingsSummary(userId: string) {
+  const db = await ensureUserSettingsTable();
+  if (!db) {
+    return {
+      visionProvider: "default",
+      hasVisionKey: false,
+      codeProvider: "default",
+      hasCodeKey: false,
+    };
+  }
+
+  const rows = (await db`
+    SELECT vision_provider, vision_api_key_encrypted, code_provider, code_api_key_encrypted
+    FROM user_settings
+    WHERE user_id = ${userId}
+  `) as Array<{
+    vision_provider: string;
+    vision_api_key_encrypted: string | null;
+    code_provider: string;
+    code_api_key_encrypted: string | null;
+  }>;
+
+  const row = rows[0];
+  return {
+    visionProvider: row?.vision_provider || "default",
+    hasVisionKey: Boolean(row?.vision_api_key_encrypted),
+    codeProvider: row?.code_provider || "default",
+    hasCodeKey: Boolean(row?.code_api_key_encrypted),
+  };
+}
+
 export async function saveUserSettings(userId: string, data: {
   visionProvider?: string;
   visionKey?: string | null;
@@ -219,6 +288,8 @@ export async function saveUserSettings(userId: string, data: {
 
   const visionKeyEncrypted = data.visionKey ? encrypt(data.visionKey) : null;
   const codeKeyEncrypted = data.codeKey ? encrypt(data.codeKey) : null;
+  const shouldClearVisionKey = data.visionKey === null;
+  const shouldClearCodeKey = data.codeKey === null;
 
   await db`
     INSERT INTO user_settings (
@@ -239,9 +310,17 @@ export async function saveUserSettings(userId: string, data: {
     )
     ON CONFLICT (user_id) DO UPDATE SET
       vision_provider = EXCLUDED.vision_provider,
-      vision_api_key_encrypted = CASE WHEN EXCLUDED.vision_api_key_encrypted IS NOT NULL THEN EXCLUDED.vision_api_key_encrypted ELSE user_settings.vision_api_key_encrypted END,
+      vision_api_key_encrypted = CASE
+        WHEN ${shouldClearVisionKey} THEN NULL
+        WHEN EXCLUDED.vision_api_key_encrypted IS NOT NULL THEN EXCLUDED.vision_api_key_encrypted
+        ELSE user_settings.vision_api_key_encrypted
+      END,
       code_provider = EXCLUDED.code_provider,
-      code_api_key_encrypted = CASE WHEN EXCLUDED.code_api_key_encrypted IS NOT NULL THEN EXCLUDED.code_api_key_encrypted ELSE user_settings.code_api_key_encrypted END,
+      code_api_key_encrypted = CASE
+        WHEN ${shouldClearCodeKey} THEN NULL
+        WHEN EXCLUDED.code_api_key_encrypted IS NOT NULL THEN EXCLUDED.code_api_key_encrypted
+        ELSE user_settings.code_api_key_encrypted
+      END,
       updated_at = now()
   `;
 

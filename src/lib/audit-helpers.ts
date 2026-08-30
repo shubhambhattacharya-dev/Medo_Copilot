@@ -77,7 +77,10 @@ function createIssue(
   description: string,
   fixPrompt: string,
   evidence: string,
-  confidence: NonNullable<AuditIssue["confidence"]>
+  confidence: NonNullable<AuditIssue["confidence"]>,
+  evidenceType: NonNullable<AuditIssue["evidenceType"]> = "tool-verified",
+  verifiedBy: string[] = ["Static page scan"],
+  source: NonNullable<AuditIssue["source"]> = "rule-based"
 ): AuditIssue {
   return {
     category,
@@ -87,6 +90,9 @@ function createIssue(
     fixPrompt,
     evidence,
     confidence,
+    evidenceType,
+    verifiedBy,
+    source,
   };
 }
 
@@ -141,7 +147,9 @@ function buildRuleIssues(signals: PageSignals, reason?: string) {
         "The URL could not be resolved from this server, so the audit cannot inspect the page content.",
         "Use a public preview URL for the app, then add a clear error state that tells users when a page cannot be loaded and offers a retry action.",
         reason,
-        "high"
+        "high",
+        "tool-verified",
+        ["DNS lookup", "Server fetch"]
       )
     );
   } else if (reason) {
@@ -153,7 +161,9 @@ function buildRuleIssues(signals: PageSignals, reason?: string) {
         "The page request failed before analysis could start.",
         "Surface a clear error state with the exact URL and a retry action instead of a generic failure message.",
         reason,
-        "high"
+        "high",
+        "tool-verified",
+        ["Browser fetch", "Static fetch"]
       )
     );
   }
@@ -168,7 +178,9 @@ function buildRuleIssues(signals: PageSignals, reason?: string) {
         "Some images do not expose alternative text, which can hurt accessibility and context for assistive technology.",
         "Add descriptive alt text for all meaningful images. Decorative images should have empty alt='' tags.",
         `${signals.imagesMissingAlt} of ${signals.imageCount} image(s) are missing alt text.`,
-        "high"
+        "high",
+        "tool-verified",
+        ["Static HTML scan"]
       )
     );
   }
@@ -183,7 +195,9 @@ function buildRuleIssues(signals: PageSignals, reason?: string) {
         "The page text is very thin, which can make the product feel under-explained and hurt SEO.",
         "Add a clear 'How it Works' section and expand on the features of your application.",
         `Extracted body text length: ${signals.contentLength} characters.`,
-        "high"
+        "high",
+        "tool-verified",
+        ["Static HTML scan"]
       )
     );
   }
@@ -198,34 +212,51 @@ function buildRuleIssues(signals: PageSignals, reason?: string) {
         "No buttons or action links were detected above the fold.",
         "Add a primary 'Get Started' or 'Demo' button clearly visible at the top of the page.",
         "Found 0 button/link text labels in the initial HTML scan.",
-        "high"
+        "high",
+        "tool-verified",
+        ["Static HTML scan"]
       )
     );
-  } else if (!/(get started|sign up|join|try|demo|book|pricing|download|hire|start)/i.test(ctaText)) {
+  } else if (!/(get started|sign up|join|try|demo|book|pricing|download|hire|start|shop|buy|cart|checkout|order|add to cart|view products|view plans|get quote|request|subscribe|learn more|contact|email|call|message|see flavours|see flavors|see gi gi flavours|tasting|stock|distributor|near you|where to buy)/i.test(ctaText)) {
     issues.push(
       createIssue(
         "cta",
         "CTA phrasing is not actionable",
         "medium",
         "The detected links do not use strong conversion verbs.",
-        "Update your main buttons to use active verbs like 'Start for free', 'Book a demo', or 'Join the waitlist'.",
+        "Update your main buttons to use active verbs like 'Shop now', 'Add to cart', 'Book a demo', or 'Get started'.",
         `Found CTAs: ${signals.ctas.slice(0, 3).join(", ")}`,
-        "medium"
+        "medium",
+        "screenshot-or-text",
+        ["CTA text scan"]
       )
     );
   }
 
   // 4. Trust & Social Proof
-  if (!/(testimonial|review|trusted by|customers|users|clients|case study|proof|social proof)/i.test(normalized)) {
+  const isPersonalPortfolio = /(portfolio|resume|cv|about me|my journey|my projects|my work|hire me|contact me|backed by|built with|engineering)/i.test(normalized);
+  const hasBusinessIndicators = /(pricing|product|shop|store|customers|clients|enterprise|business|b2b|saas|platform|service|company|brand|buy now|add to cart|checkout)/i.test(normalized);
+  
+  if (!isPersonalPortfolio && !/(testimonial|review|trusted by|customers|users|clients|case study|proof|social proof|rated|stars|logo)/i.test(normalized)) {
+    const severity = hasBusinessIndicators ? "medium" : "low";
+    const description = hasBusinessIndicators
+      ? "The page lacks testimonials, user counts, or brand logos that build credibility."
+      : "The page could benefit from social proof elements, but this is less critical for personal or content-focused sites.";
+    const fixPrompt = hasBusinessIndicators
+      ? "Add a 'Trusted By' logo strip or 2-3 customer testimonials near your primary CTA."
+      : "Consider adding a short testimonial, client logo, or personal recommendation to strengthen credibility.";
+    
     issues.push(
       createIssue(
         "trust",
         "Missing social proof",
-        "medium",
-        "The page lacks testimonials, user counts, or brand logos that build credibility.",
-        "Add a 'Trusted By' logo strip or 2-3 customer testimonials near your primary CTA.",
-        "No keywords related to social proof (testimonials, reviews) detected in the page text.",
-        "medium"
+        severity,
+        description,
+        fixPrompt,
+        "No strong social proof keywords (testimonials, reviews, trusted-by) detected in page text.",
+        severity === "medium" ? "medium" : "low",
+        "screenshot-or-text",
+        ["Page text scan"]
       )
     );
   }
@@ -240,7 +271,9 @@ function buildRuleIssues(signals: PageSignals, reason?: string) {
         "The page title is too short or missing, which hurts click-through rates from search and social shares.",
         "Update the <title> tag to clearly state the product name and its primary value proposition.",
         `Title: "${signals.title || "Empty"}"`,
-        "high"
+        "high",
+        "tool-verified",
+        ["Static HTML scan"]
       )
     );
   }
@@ -254,7 +287,9 @@ function buildRuleIssues(signals: PageSignals, reason?: string) {
         "No meta description found. Search engines will show generic snippets which might not entice users.",
         "Add a <meta name='description'> tag with a 150-160 character summary of your app's value.",
         "Meta description tag is absent from the HTML.",
-        "high"
+        "high",
+        "tool-verified",
+        ["Static HTML scan"]
       )
     );
   }
@@ -269,7 +304,9 @@ function buildRuleIssues(signals: PageSignals, reason?: string) {
         "The page may not scale correctly on mobile devices.",
         "Add <meta name='viewport' content='width=device-width, initial-scale=1'> to your HTML <head>.",
         "Missing standard mobile-responsive meta tag.",
-        "high"
+        "high",
+        "tool-verified",
+        ["Static HTML scan"]
       )
     );
   }
@@ -292,6 +329,9 @@ function mergeIssues(aiIssues: AuditIssue[], ruleIssues: AuditIssue[]) {
         ...issue,
         evidence: issue.evidence || "AI finding based on extracted page content.",
         confidence: issue.confidence || "medium",
+        evidenceType: issue.evidenceType || "ai-inference",
+        verifiedBy: issue.verifiedBy || ["AI review"],
+        source: issue.source || "ai-vision",
       });
     }
   }
