@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as cheerio from "cheerio";
-import { chromium, type Browser } from "playwright";
 import { saveAudit, getUserSettings, getCachedAudit } from "@/lib/audits";
 import { fetchGithubRepoCode } from "@/lib/github";
 import { auth } from "@clerk/nextjs/server";
@@ -28,8 +27,6 @@ import { assertPublicHttpUrl } from "@/lib/url-safety";
 import { assertProductionEnv } from "@/lib/env";
 import { createFullAuditTrace, flushAuditTrace, isObservabilityEnabled } from "@/lib/observability";
 
-// ... rest of imports ...
-
 function createErrorResponse(error: unknown): NextResponse<ApiResponse<AuditResponse>> {
   if (error instanceof AuditError) {
     return NextResponse.json(
@@ -44,12 +41,28 @@ function createErrorResponse(error: unknown): NextResponse<ApiResponse<AuditResp
   );
 }
 
+// Playwright is unavailable in Vercel serverless, so load it lazily and fall back
+// to static fetch + deterministic metrics when it cannot be imported.
+let playwrightModule: typeof import("playwright") | null = null;
+
+async function getPlaywright() {
+  if (playwrightModule) return playwrightModule;
+  try {
+    playwrightModule = await import("playwright");
+    return playwrightModule;
+  } catch (e: unknown) {
+    return null;
+  }
+}
+
 // Browser pooling
-let browserInstance: Browser | null = null;
+let browserInstance: { isConnected(): boolean; close(): Promise<void> } | null = null;
 
 async function getBrowser() {
+  const pw = await getPlaywright();
+  if (!pw) return null;
   if (!browserInstance || !browserInstance.isConnected()) {
-    browserInstance = await chromium.launch({
+    browserInstance = await pw.chromium.launch({
       headless: true,
       args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
     });
@@ -275,7 +288,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<A
       try {
         console.log(`Launching browser for ${validUrl}...`);
         const browser = await getBrowser();
-        const context = await browser.newContext({
+        if (!browser) {
+          throw new Error("Playwright is unavailable in this environment");
+        }
+        const context = await (browser as any).newContext({
           viewport: { width: 1280, height: 800 },
           userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
         });
