@@ -50,13 +50,33 @@ async function getPlaywright() {
   try {
     playwrightModule = await import("playwright");
     return playwrightModule;
-  } catch (e: unknown) {
+  } catch {
     return null;
   }
 }
 
+// Minimal browser interface for Vercel serverless compatibility
+interface BrowserLike {
+  isConnected(): boolean;
+  close(): Promise<void>;
+  newContext(options: Record<string, unknown>): Promise<ContextLike>;
+}
+
+interface ContextLike {
+  newPage(): Promise<PageLike>;
+  close(): Promise<void>;
+}
+
+interface PageLike {
+  goto(url: string, options: Record<string, unknown>): Promise<void>;
+  waitForTimeout(ms: number): Promise<void>;
+  screenshot(options: Record<string, unknown>): Promise<Buffer>;
+  setViewportSize(options: { width: number; height: number }): Promise<void>;
+  content(): Promise<string>;
+}
+
 // Browser pooling
-let browserInstance: { isConnected(): boolean; close(): Promise<void> } | null = null;
+let browserInstance: BrowserLike | null = null;
 
 async function getBrowser() {
   const pw = await getPlaywright();
@@ -65,7 +85,7 @@ async function getBrowser() {
     browserInstance = await pw.chromium.launch({
       headless: true,
       args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-    });
+    }) as unknown as BrowserLike;
   }
   return browserInstance;
 }
@@ -291,7 +311,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<A
         if (!browser) {
           throw new Error("Playwright is unavailable in this environment");
         }
-        const context = await (browser as any).newContext({
+        const context = await browser.newContext({
           viewport: { width: 1280, height: 800 },
           userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
         });
@@ -322,6 +342,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<A
           pageSignals = getPageSignals($);
           pageTitle = pageSignals.title || parsedUrl.hostname;
           pageText = pageSignals.text.substring(0, 8000);
+          const lastPeriod = pageText.lastIndexOf(". ");
+          const lastNewline = pageText.lastIndexOf("\n");
+          const boundary = Math.max(lastPeriod, lastNewline);
+          if (boundary > 6000) pageText = pageText.substring(0, boundary + 1);
         } catch (navErr: unknown) {
           console.warn("Browser navigation failed, attempting static fetch fallback:", navErr);
           throw navErr; // Trigger static fetch below
@@ -349,6 +373,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<A
           pageSignals = getPageSignals($);
           pageTitle = pageSignals.title || parsedUrl.hostname;
           pageText = pageSignals.text.substring(0, 8000);
+          const lastPeriod2 = pageText.lastIndexOf(". ");
+          const lastNewline2 = pageText.lastIndexOf("\n");
+          const boundary2 = Math.max(lastPeriod2, lastNewline2);
+          if (boundary2 > 6000) pageText = pageText.substring(0, boundary2 + 1);
           
           // CRITICAL: Clear reason because we successfully got content!
           fetchReason = ""; 
